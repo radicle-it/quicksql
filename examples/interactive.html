@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quick SQL — Interactive</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: monospace;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+
+        header {
+            padding: 8px 16px;
+            background: #252526;
+            border-bottom: 1px solid #3c3c3c;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        header span { color: #9cdcfe; font-weight: bold; font-size: 15px; }
+
+        #error {
+            display: none;
+            padding: 6px 16px;
+            background: #5a1d1d;
+            color: #f48771;
+            font-size: 12px;
+            border-bottom: 1px solid #be1100;
+        }
+
+        .panels {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .panel {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .panel + .panel {
+            border-left: 2px solid #3c3c3c;
+        }
+
+        .panel-label {
+            padding: 4px 12px;
+            background: #2d2d2d;
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid #3c3c3c;
+        }
+
+        textarea, pre {
+            flex: 1;
+            padding: 16px;
+            font-family: 'Cascadia Code', 'Consolas', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            overflow: auto;
+            resize: none;
+        }
+
+        textarea {
+            background: #1e1e1e;
+            color: #ce9178;
+            border: none;
+            outline: none;
+            caret-color: #aeafad;
+        }
+
+        pre {
+            background: #1e1e1e;
+            color: #4ec9b0;
+            white-space: pre;
+        }
+
+        footer {
+            padding: 4px 12px;
+            background: #007acc;
+            color: white;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <span>Quick SQL</span>
+        <span style="color:#888; font-size:12px">— digita a sinistra, il DDL Oracle appare a destra</span>
+    </header>
+    <div id="error"></div>
+    <div class="panels">
+        <div class="panel">
+            <div class="panel-label">Quick SQL (shorthand)</div>
+            <textarea id="input" spellcheck="false">departments /insert 2
+   name /nn
+   location
+   country
+   employees /insert 4
+      name /nn vc50
+      email /lower
+      cost center num
+      date hired
+      job vc255
+
+emp_v = departments employees
+
+# settings = { "prefix": null, "semantics": "CHAR", "DV": false, pk: identityDataType }
+</textarea>
+        </div>
+        <div class="panel">
+            <div class="panel-label">DDL Oracle SQL (output)</div>
+            <pre id="output"></pre>
+        </div>
+    </div>
+    <footer id="status">pronto</footer>
+
+    <script type="module">
+        import quicksql from '../dist/quick-sql.js';
+
+        const input  = document.getElementById('input');
+        const output = document.getElementById('output');
+        const error  = document.getElementById('error');
+        const status = document.getElementById('status');
+
+        function translate() {
+            try {
+                const ddl = quicksql.toDDL(input.value);
+                output.textContent = ddl;
+                error.style.display = 'none';
+                const lines = ddl.split('\n').length;
+                status.textContent = `${lines} righe generate`;
+            } catch (e) {
+                error.textContent = e.message || String(e);
+                error.style.display = 'block';
+                status.textContent = 'errore';
+            }
+        }
+
+        input.addEventListener('input', translate);
+        translate();
+    </script>
+</body>
+</html>
