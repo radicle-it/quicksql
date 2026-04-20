@@ -807,13 +807,17 @@ function edgeStyle(mandatory) {
             strokeDasharray: mandatory ? '' : '6 4',
             sourceMarker: {
                 tagName: 'path',
-                d: 'M 0 -4 L -8 0 L 0 4',   // single vertical bar (one side of crow's foot)
+                // "one" side: single perpendicular bar at the source
+                d: 'M 0 -6 L 0 6',
                 stroke: color, fill: 'none', strokeWidth: 1.5,
             },
             targetMarker: {
                 tagName: 'path',
-                // crow's foot: fork + inner bar
-                d: 'M 0 -6 L -12 0 L 0 6 M -7 -6 L -7 6',
+                // Crow's foot: all three lines START at (0,0) — the entity
+                // connection point — and DIVERGE toward the source (x−).
+                // In X6 targetMarker coords x+ is the edge direction (into target),
+                // so x− is back along the line toward source.
+                d: 'M -12 -7 L 0 0 L -12 7 M 0 0 L -12 0',
                 stroke: color, fill: 'none', strokeWidth: 1.5,
             },
         },
@@ -909,11 +913,17 @@ function updateDiagram(keepPositions = false) {
             renderERD(data);
         }
     } catch (e) {
-        erdContainer.innerHTML =
-            `<div style="padding:20px;color:#f48771;font-size:12px;white-space:pre-wrap">`
-            + `Errore diagramma:\n${e && e.message ? e.message : e}</div>`;
-        x6graph = null;
-        lastRenderedInput = null;
+        if (x6graph) {
+            // Transient error (e.g. mid-typing invalid JSON in # settings).
+            // Keep the graph and lastRenderedInput untouched so the next
+            // successful parse can still do a smart update with preserved positions.
+            statusEl.textContent = 'ERD: ' + (e && e.message ? e.message : e).toString().slice(0, 100);
+        } else {
+            // No graph at all yet — show the error inside the container.
+            erdContainer.innerHTML =
+                `<div style="padding:20px;color:#f48771;font-size:12px;white-space:pre-wrap">`
+                + `Errore diagramma:\n${e && e.message ? e.message : e}</div>`;
+        }
     }
 }
 
