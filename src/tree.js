@@ -37,6 +37,27 @@ let tree = (function(){
     datatypes = datatypes.concat(vectTypes);
     datatypes = datatypes.concat(geoTypes);
 
+    /** Remove a trailing ',\n' from a DDL string. */
+    function trimTrailingComma(s) {
+        if (s.lastIndexOf(',\n') === s.length - 2)
+            s = s.substring(0, s.length - 2) + '\n';
+        return s;
+    }
+
+    /**
+     * Return the PK type-modifier clause for a table object.
+     * Works for generated-id columns and _trans table id columns.
+     */
+    function pkTypeModifier(objName) {
+        if (ddl.optionEQvalue('pk', 'identityDataType'))
+            return IDENTITY_MODIFIER_LOWER;
+        if (ddl.optionEQvalue('pk', 'seq'))
+            return ('default on null ' + objName + '_seq.NEXTVAL ').toLowerCase();
+        if (ddl.optionEQvalue('pk', 'guid'))
+            return 'default on null to_number(sys_guid(), \'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\') ';
+        return 'not null';
+    }
+
     /**
      * Node in QSQL tree defining a Table, a Column, a View, or an Option
      * @param lineNo  -- line number
@@ -70,12 +91,11 @@ let tree = (function(){
         this.maxChildNameLen = function() {
             if( this._maxChildNameLen >= 0 ) return this._maxChildNameLen;
             var maxLen = 2;
-            if( ddl.optionEQvalue('rowkey',true) || this.isOption('rowkey') )
+            if( this.hasRowKey() )
                 maxLen = 'row_key'.length;
-            if( ddl.optionEQvalue('Row Version Number','yes') || this.isOption('rowversion') )
+            if( this.hasRowVersion() )
                 maxLen = 'row_version'.length;
-            if( ddl.optionEQvalue('Audit Columns','yes') || this.isOption('auditcols')
-            || this.isOption('audit','col') || this.isOption('audit','cols') || this.isOption('audit','columns') ) {
+            if( this.hasAuditCols() ) {
                 let len = ddl.getOptionValue('createdcol').length;
                 if( maxLen < len )
                     maxLen = len;
@@ -159,6 +179,45 @@ let tree = (function(){
                 pairs.push({ label: match[1], value: match[2] !== undefined ? match[2] : null });
             }
             return pairs;
+        };
+
+        /** True when audit columns are enabled for this table (global option or per-table option). */
+        this.hasAuditCols = function() {
+            return ddl.optionEQvalue('Audit Columns','yes') || this.isOption('auditcols')
+                || this.isOption('audit','col') || this.isOption('audit','cols') || this.isOption('audit','columns');
+        };
+
+        /** True when row-version tracking is enabled for this table. */
+        this.hasRowVersion = function() {
+            return ddl.optionEQvalue('Row Version Number','yes') || this.isOption('rowversion');
+        };
+
+        /** True when row-key tracking is enabled for this table. */
+        this.hasRowKey = function() {
+            return ddl.optionEQvalue('rowkey',true) || this.isOption('rowkey');
+        };
+
+        /**
+         * Returns the child nodes that are plain columns (no sub-children, no FK ref).
+         * This is the base filter used everywhere we iterate "regular" columns.
+         */
+        this.regularColumns = function() {
+            return this.children.filter(function(c) {
+                return c.children.length === 0 && c.refId() === null;
+            });
+        };
+
+        /** Returns the USER expression appropriate for the current context (plain or APEX). */
+        this.apexUser = function() {
+            return ddl.optionEQvalue('apex','yes')
+                ? 'coalesce(sys_context(\'APEX$SESSION\',\'APP_USER\'),user)'
+                : 'user';
+        };
+
+        /** Returns the sysdate/systimestamp function matching the audit date-type option. */
+        this.auditSysDateFn = function() {
+            let auditDateType = ddl.getOptionValue('auditdate') || ddl.getOptionValue('Date Data Type');
+            return auditDateType.toLowerCase().indexOf('timestamp') >= 0 ? 'systimestamp' : 'sysdate';
         };
 
         /**
@@ -518,16 +577,10 @@ let tree = (function(){
                 ret +='           check ('+this.parseName()+' between '+values+')';        		
             }
             if( this.isOption('pk') ) {
-                let typeModifier = ' not null';
-                if( ret.startsWith('number') && ddl.optionEQvalue('pk', 'identityDataType') )
-                    typeModifier = ' ' + IDENTITY_MODIFIER_LOWER;
-                if( ret.startsWith('number') && ddl.optionEQvalue('pk', 'seq') ) {
-                    let objName = ddl.objPrefix()  + this.parent.parseName();
-                    typeModifier = ' default on null '+objName+'_seq.NEXTVAL '.toLowerCase();
-                }
-                if( ret.startsWith('number') && ddl.optionEQvalue('pk', 'guid') )
-                    typeModifier = ' default on null to_number(sys_guid(), \'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\') ';
-                ret += typeModifier +'\n';  
+                let typeModifier = ret.startsWith('number')
+                    ? ' ' + pkTypeModifier(ddl.objPrefix() + this.parent.parseName())
+                    : ' not null';
+                ret += typeModifier + '\n';
                 ret += tab + tab + ' '.repeat(parent.maxChildNameLen()) + 'constraint ' + concatNames(ddl.objPrefix(),parent_child,'_pk')+' primary key';
             }
             if( this.annotations != null ) {
@@ -923,14 +976,7 @@ let tree = (function(){
 
             let idColName = this.getGenIdColName();
             if( idColName != null && !this.isOption('pk') ) {
-                let typeModifier = 'not null';
-                if( ddl.optionEQvalue('pk', 'identityDataType') )
-                    typeModifier = IDENTITY_MODIFIER_LOWER;
-                if( ddl.optionEQvalue('pk', 'seq') )
-                    typeModifier = 'default on null '+objName+'_seq.NEXTVAL '.toLowerCase();
-                if( ddl.optionEQvalue('pk', 'guid') )
-                    typeModifier = 'default on null to_number(sys_guid(), \'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\') ';
-                ret += tab +  idColName + pad + 'number ' + typeModifier + '\n';                
+                ret += tab +  idColName + pad + 'number ' + pkTypeModifier(objName) + '\n';
                 const obj_col = concatNames(ddl.objPrefix('no schema')  + this.parseName(),'_',idColName);  
                 ret += tab +  tab+' '.repeat(this.maxChildNameLen()) +'constraint '+concatNames(obj_col,'_pk')+' primary key,\n';
             } else {
@@ -1012,11 +1058,11 @@ let tree = (function(){
                 }
             }
 
-            if( ddl.optionEQvalue('rowkey',true) || this.isOption('rowkey') ) {
+            if( this.hasRowKey() ) {
                 let pad = tab+' '.repeat(this.maxChildNameLen() - 'ROW_KEY'.length);
-                ret += tab +  'row_key' + pad + 'varchar2(30'+ddl.semantics()+ ')\n';              	
+                ret += tab +  'row_key' + pad + 'varchar2(30'+ddl.semantics()+ ')\n';
                 ret += tab +  tab+' '.repeat(this.maxChildNameLen()) +'constraint '+objName+'_row_key_unq unique not null,\n';
-            }            	
+            }
 
             for( let i = 0; i < this.children.length; i++ ) {
                 let child = this.children[i];
@@ -1046,12 +1092,11 @@ let tree = (function(){
                     }
                 } 
             }
-            if( ddl.optionEQvalue('rowVersion','yes') || this.isOption('rowversion') ) {
+            if( this.hasRowVersion() ) {
                 let pad = tab+' '.repeat(this.maxChildNameLen() - 'row_version'.length);
-                ret += tab +  'row_version' + pad + 'integer not null,\n';              	
-            }            	
-            if( ddl.optionEQvalue('Audit Columns','yes') || this.isOption('auditcols')
-                      || this.isOption('audit','col') || this.isOption('audit','cols') || this.isOption('audit','columns') ) {
+                ret += tab +  'row_version' + pad + 'integer not null,\n';
+            }
+            if( this.hasAuditCols() ) {
                 let auditDateType = ddl.getOptionValue('auditdate');
                 if( auditDateType == null || auditDateType == '' )
                     auditDateType = ddl.getOptionValue('Date Data Type');
@@ -1076,8 +1121,7 @@ let tree = (function(){
                 ret += tab +  col.toUpperCase() + pad + type + ' not null,\n';  
             }
             ret += this.genConstraint();
-            if( ret.lastIndexOf(',\n') == ret.length-2 )
-                ret = ret.substring(0,ret.length-2)+'\n';
+            ret = trimTrailingComma(ret);
             let tableAnnotations = this.annotations != null ? '\nannotations (' + this.annotations + ')' : '';
             let compressClause = '';
             if( ddl.optionEQvalue('compress','yes') || this.isOption('compress') )
@@ -1330,16 +1374,15 @@ let tree = (function(){
                         }
                     }
                 }
-                if( ddl.optionEQvalue('rowVersion','yes') || tbl.isOption('rowversion') ) {
+                if( tbl.hasRowVersion() ) {
                     let pad = tab+' '.repeat(tbl.maxChildNameLen() - 'row_version'.length);
                     ret += tab + alias+'.'+ 'row_version' + pad + singular(tblName)+'_'+ 'row_version,\n';
                 }
-                if( ddl.optionEQvalue('rowkey','yes') || tbl.isOption('rowkey') ) {
+                if( tbl.hasRowKey() ) {
                     let pad = tab+' '.repeat(tbl.maxChildNameLen() - 'ROW_KEY'.length);
                     ret += tab + alias+'.'+ 'ROW_KEY' + pad + singular(tblName)+'_'+ 'ROW_KEY,\n';
                 }
-                if( ddl.optionEQvalue('Audit Columns','yes') || tbl.isOption('auditcols')
-                   || tbl.isOption('audit','col') || tbl.isOption('audit','cols') || tbl.isOption('audit','columns') ) {
+                if( tbl.hasAuditCols() ) {
                     let created = ddl.getOptionValue('createdcol');
                     let pad = tab+' '.repeat(tbl.maxChildNameLen() - created.length);
                     ret += tab + alias+'.'+  created + pad + singular(tblName)+'_'+ created+',\n';
@@ -1354,8 +1397,7 @@ let tree = (function(){
                     ret += tab + alias+'.'+  updatedby + pad + singular(tblName)+'_'+ updatedby + ',\n';
                 }
             }
-            if( ret.lastIndexOf(',\n') == ret.length-2 )
-                ret = ret.substr(0,ret.length-2)+'\n';
+            ret = trimTrailingComma(ret);
             // Build set of view table names for quick lookup
             let viewTableNames = {};
             for( let i = 2; i < chunks.length; i++ )
@@ -1503,7 +1545,7 @@ let tree = (function(){
             ret += '    for each row\n';
 
             // G-4320: WHILE loop label inside compress_int
-            if( ddl.optionEQvalue('rowkey','yes') || this.isOption('rowkey') )  {
+            if( this.hasRowKey() )  {
                 ret += `declare
     function compress_int (n in integer ) return varchar2
     as
@@ -1532,11 +1574,8 @@ let tree = (function(){
 
             ret += 'begin\n';
             var OK = false;
-            var user = 'user';
-            if( ddl.optionEQvalue('apex','yes') ) {
-                user = 'coalesce(sys_context(\'APEX$SESSION\',\'APP_USER\'),user)';
-            }
-            if( ddl.optionEQvalue('rowkey','yes') || this.isOption('rowkey') )  {
+            var user = this.apexUser();
+            if( this.hasRowKey() )  {
                 ret += '    :new.row_key := compress_int(row_key_seq.nextval);\n';
                 OK = true;
             }
@@ -1551,13 +1590,12 @@ let tree = (function(){
                 ret += '    :new.'+child.parseName().toLowerCase()+' := '+method+'(:new.'+child.parseName().toLowerCase()+');\n';
                 OK = true;
             }
-            if( ddl.optionEQvalue('Row Version Number','yes') || this.isOption('rowversion') )  {
+            if( this.hasRowVersion() )  {
                 ret += '    :new.row_version := 1;\n';
                 OK = true;
             }
-            if( ddl.optionEQvalue('Audit Columns','yes') || this.isOption('auditcols') || this.isOption('audit','col') || this.isOption('audit','cols') || this.isOption('audit','columns') ) {
-                let auditDateType = ddl.getOptionValue('auditdate') || ddl.getOptionValue('Date Data Type');
-                let sysDateFn = (auditDateType.toLowerCase().indexOf('timestamp') >= 0) ? 'systimestamp' : 'sysdate';
+            if( this.hasAuditCols() ) {
+                let sysDateFn = this.auditSysDateFn();
                 ret += '    :new.'+ddl.getOptionValue('createdcol')+' := '+sysDateFn+';\n';
                 ret += '    :new.'+ddl.getOptionValue('createdbycol')+' := '+user+';\n';
                 ret += '    :new.'+ddl.getOptionValue('updatedcol')+' := '+sysDateFn+';\n';
@@ -1588,9 +1626,8 @@ let tree = (function(){
                     hasLowerUpper = true; break;
                 }
             }
-            const hasRowVersion = ddl.optionEQvalue('Row Version Number','yes') || this.isOption('rowversion');
-            const hasAuditCols  = ddl.optionEQvalue('Audit Columns','yes') || this.isOption('auditcols')
-                                || this.isOption('audit','col') || this.isOption('audit','cols') || this.isOption('audit','columns');
+            const hasRowVersion = this.hasRowVersion();
+            const hasAuditCols  = this.hasAuditCols();
             if( !hasLowerUpper && !hasRowVersion && !hasAuditCols ) return '';
             let editionable = ddl.optionEQvalue('editionable','yes') ? ' editionable' : '';
             let objName = (ddl.objPrefix() + this.parseName()).toLowerCase();
@@ -1599,9 +1636,7 @@ let tree = (function(){
             ret += '    on '+objName+'\n';
             ret += '    for each row\n';
             ret += 'begin\n';
-            var user = ddl.optionEQvalue('apex','yes')
-                ? 'coalesce(sys_context(\'APEX$SESSION\',\'APP_USER\'),user)'
-                : 'user';
+            var user = this.apexUser();
             for( var i = 0; i < this.children.length; i++ ) {
                 var child = this.children[i];
                 let method = null;
@@ -1616,8 +1651,7 @@ let tree = (function(){
                 ret += '    :new.row_version := nvl(:old.row_version, 0) + 1;\n';
             }
             if( hasAuditCols ) {
-                let auditDateType = ddl.getOptionValue('auditdate') || ddl.getOptionValue('Date Data Type');
-                let sysDateFn = (auditDateType.toLowerCase().indexOf('timestamp') >= 0) ? 'systimestamp' : 'sysdate';
+                let sysDateFn = this.auditSysDateFn();
                 ret += '    :new.'+ddl.getOptionValue('updatedcol')+' := '+sysDateFn+';\n';
                 ret += '    :new.'+ddl.getOptionValue('updatedbycol')+' := '+user+';\n';
             }
@@ -1655,11 +1689,8 @@ let tree = (function(){
             let mode = 'out';
             if( kind != 'get' )
                 mode = ' in';
-            let ret =  tab+'procedure '+kind+'_row (\n'; 
-            let idColName = this.getGenIdColName();
-            if( idColName == null ) {
-                idColName = this.getExplicitPkName();
-            }
+            let ret =  tab+'procedure '+kind+'_row (\n';
+            const idColName = this.getPkName();
             ret += tab+tab+'p_'+idColName+'        in  '+this.getPkType()+modifier;
             for( var fk in this.fks ) {
                 let parent = this.fks[fk];
@@ -1671,12 +1702,7 @@ let tree = (function(){
                 ret += ',\n';
                 ret += tab+tab+'P_'+fk+'   '+mode+'  '+type+modifier;
             }
-            for( let i = 0; i < this.children.length; i++ ) {
-                var child = this.children[i]; 
-                if( child.refId() != null  )
-                    continue;
-                if( child.children.length != 0 ) 
-                    continue;
+            for( const child of this.regularColumns() ) {
                 ret += ',\n';
                 ret += tab+tab+'P_'+child.parseName()+'   '+mode+'  '+child.parseType('plsql')+modifier;
             }
@@ -1684,10 +1710,7 @@ let tree = (function(){
             return ret;
         };
         this.procBody = function( kind /* get, insert, update */ ) {
-            let idColName = this.getGenIdColName();
-            if( idColName == null ) {
-                idColName = this.getExplicitPkName();
-            }
+            const idColName = this.getPkName();
             let objName = ddl.objPrefix()  + this.parseName();
             let ret =    tab+'is \n';
             ret +=    tab+'begin \n';
@@ -1699,10 +1722,7 @@ let tree = (function(){
                     selectCols.push( fk );
                     intoCols.push(   'p_'+fk );
                 }
-                for( let gi = 0; gi < this.children.length; gi++ ) {
-                    const gchild = this.children[gi];
-                    if( gchild.refId() != null  ) continue;
-                    if( gchild.children.length !== 0 ) continue;
+                for( const gchild of this.regularColumns() ) {
                     const cn = gchild.parseName().toLowerCase();
                     selectCols.push( cn );
                     intoCols.push(   'p_'+cn );
@@ -1747,13 +1767,8 @@ let tree = (function(){
                     row = tab+tab+tab+fk+' = P_'+fk;
                 ret += row;
             }
-            for( var i = 0; i < this.children.length; i++ ) {
-                var child = this.children[i]; 
-                if( child.refId() != null  )
-                    continue;
-                if( child.children.length != 0 ) 
-                    continue;
-                if( kind == 'insert' || kind == 'update' ) 
+            for( const child of this.regularColumns() ) {
+                if( kind == 'insert' || kind == 'update' )
                     ret += ',\n';
                 let row = '';
                 if( kind == 'insert' )
@@ -1765,16 +1780,11 @@ let tree = (function(){
             if( kind == 'insert' ) {
                 ret +=    '\n'+tab+tab+') values ( \n';
                 ret +=    tab+tab+tab+'p_'+idColName;
-                for( let fk in this.fks ) {	
+                for( let fk in this.fks ) {
                     ret += ',\n';
                     ret += tab+tab+tab+'p_'+fk;
                 }
-                for( let i = 0; i < this.children.length; i++ ) {
-                    let child = this.children[i]; 
-                    if (child.refId() != null  )
-                        continue;
-                    if( child.children.length != 0 ) 
-                        continue;
+                for( const child of this.regularColumns() ) {
                     ret += ',\n';
                     ret += tab+tab+tab+'p_'+child.parseName();
                 }
@@ -1798,12 +1808,9 @@ let tree = (function(){
             ret += ';\n\n';
             ret += this.procDecl('insert'); 
             ret += ';\n\n';
-            ret += this.procDecl('update'); 
+            ret += this.procDecl('update');
             ret += ';\n\n';
-            let idColName = this.getGenIdColName();
-            if( idColName == null ) {
-                idColName = this.getExplicitPkName();
-            }
+            const idColName = this.getPkName();
             ret += '    procedure delete_row (\n'+
                 '        p_'+idColName+'              in integer\n'+
                 '    );\n'+
@@ -1912,19 +1919,14 @@ let tree = (function(){
                     }
                     insert += tab+fk+_id+',\n';
                 }
-                for( let j = 0; j < this.children.length; j++ ) {
-                    let child = this.children[j];
+                for( const child of this.regularColumns() ) {
                     if( idColName != null && child.parseName() == 'id' )
                         continue;
-                    if (child.refId() == null  ) {
-                        if( child.isOption('pk') )
-                            continue; //insert += '--';
-                        if( 0 == child.children.length ) 
-                            insert += tab+child.parseName()+',\n';
-                    }
+                    if( child.isOption('pk') )
+                        continue;
+                    insert += tab+child.parseName()+',\n';
                 }
-                if( insert.lastIndexOf(',\n') == insert.length-2 )
-                    insert = insert.substring(0,insert.length-2)+'\n';
+                insert = trimTrailingComma(insert);
 
                 insert += ') values (\n';
 
@@ -1993,35 +1995,24 @@ let tree = (function(){
                     } 
                     insert += tab+translate(ddl.getOptionValue('Data Language'),generateSample(objName,singular(ref)+'_id', type, values))+',\n';
                 }
-                for( let j = 0; j < this.children.length; j++ ) {
-                    let child = this.children[j]; 
+                for( const child of this.regularColumns() ) {
                     if( idColName != null && child.parseName() == 'id' )
                         continue;
-                    if (child.refId() == null  ) {
-                        if( child.parseName() == this.getExplicitPkName() )
-                            continue; //insert += '--';
-                        if( 0 == child.children.length )  {
-                            let values = child.parseValues();
-                            let cname = child.parseName();
-                            if( elem != null ) {
-                                let v = elem[cname];
-                                if( v != null ) {
-                                    values = [];
-                                    values[0] = v;
-                                }                                   
-                            }
-                            /*let tmp = getValue(ddl.data, null no name at level 0, cname, this.parseName());
-                            if( tmp != null && tmp[i] != null ) {
-                                values = [];
-                                values[0] = tmp[i];
-                            }*/
-                            let datum = generateSample(objName, cname, child.parseType(pure=>true), values);
-                            insert += tab + translate(ddl.getOptionValue('Data Language'), datum)+',\n';
+                    if( child.parseName() == this.getExplicitPkName() )
+                        continue;
+                    let values = child.parseValues();
+                    let cname = child.parseName();
+                    if( elem != null ) {
+                        let v = elem[cname];
+                        if( v != null ) {
+                            values = [];
+                            values[0] = v;
                         }
                     }
+                    let datum = generateSample(objName, cname, child.parseType(pure=>true), values);
+                    insert += tab + translate(ddl.getOptionValue('Data Language'), datum)+',\n';
                 }
-                if( insert.lastIndexOf(',\n') == insert.length-2 )
-                    insert = insert.substring(0,insert.length-2)+'\n';
+                insert = trimTrailingComma(insert);
                 insert += ');\n';
             }
  
@@ -2107,13 +2098,10 @@ let tree = (function(){
             let fkCols = {};
             if( rootNode.fks != null )
                 for( let fk in rootNode.fks ) fkCols[fk] = true;
-            for( let i = 0; i < rootNode.children.length; i++ ) {
-                let child = rootNode.children[i];
-                if( child.children.length > 0 ) continue;
+            for( const child of rootNode.regularColumns() ) {
                 let cname = child.parseName();
                 if( cname == rootPkCol ) continue;
                 if( fkCols[cname] ) continue;
-                if( child.refId() != null ) continue;
                 ret += tab + cname + ' '.repeat(rootMaxLen - cname.length) + ' : ' + cname + ',\n';
             }
 
@@ -2159,13 +2147,10 @@ let tree = (function(){
 
                 ret += tab + tab + '_id' + ' '.repeat(nestedMaxLen - '_id'.length) + ' : ' + nestedPkCol + ',\n';
 
-                for( let i = 0; i < nestedNode.children.length; i++ ) {
-                    let child = nestedNode.children[i];
-                    if( child.children.length > 0 ) continue;
+                for( const child of nestedNode.regularColumns() ) {
                     let cname = child.parseName();
                     if( cname == nestedPkCol ) continue;
                     if( nestedFkCols[cname] ) continue;
-                    if( child.refId() != null ) continue;
                     ret += tab + tab + cname + ' '.repeat(nestedMaxLen - cname.length) + ' : ' + cname + ',\n';
                 }
 
@@ -2228,14 +2213,7 @@ let tree = (function(){
 
             // id column - same PK strategy as parent
             let pad = tab + ' '.repeat(maxLen - 'id'.length);
-            let typeModifier = 'not null';
-            if (ddl.optionEQvalue('pk', 'identityDataType'))
-                typeModifier = 'generated by default on null as identity';
-            if (ddl.optionEQvalue('pk', 'seq'))
-                typeModifier = 'default on null ' + transName + '_seq.nextval';
-            if (ddl.optionEQvalue('pk', 'guid'))
-                typeModifier = 'default on null to_number(sys_guid(), \'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\') ';
-            ret += tab + 'id' + pad + 'number ' + typeModifier + '\n';
+            ret += tab + 'id' + pad + 'number ' + pkTypeModifier(transName) + '\n';
             ret += tab + tab + ' '.repeat(maxLen) + 'constraint ' + transName + '_id_pk primary key,\n';
 
             // FK to parent table
@@ -2297,14 +2275,9 @@ let tree = (function(){
             let selectCols = [];
 
             // id column
-            let idColName = this.getGenIdColName();
-            if (idColName != null) {
+            const idColName = this.getPkName();
+            if (idColName != null)
                 selectCols.push('k.' + idColName);
-            } else {
-                let pkName = this.getExplicitPkName();
-                if (pkName != null)
-                    selectCols.push('k.' + pkName);
-            }
 
             // FK columns
             this.lateInitFks();
@@ -2323,14 +2296,10 @@ let tree = (function(){
             for (let i = 0; i < transCols.length; i++)
                 transColNames[transCols[i].parseName()] = true;
 
-            for (let i = 0; i < this.children.length; i++) {
-                let child = this.children[i];
-                if (child.children.length > 0) continue;
-                if (child.refId() != null) continue;
+            for (const child of this.regularColumns()) {
                 let cname = child.parseName();
                 if (idColName != null && cname == 'id') continue;
                 if (cname == this.getExplicitPkName()) continue;
-
                 if (transColNames[cname]) {
                     selectCols.push('coalesce(t.trans_' + cname + ', k.' + cname + ') as ' + cname);
                 } else {
