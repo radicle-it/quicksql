@@ -872,22 +872,53 @@ const errorEl      = document.getElementById('error');
 const statusEl     = document.getElementById('status');
 
 let activeTab = 'ddl';
+let lastRenderedInput = null;   // quicksql text last used to build the diagram
 
-function updateDiagram() {
+/**
+ * Update the ERD diagram.
+ *
+ * keepPositions = true  → used during live typing: existing nodes stay where
+ *                          the user dragged them; only new nodes get auto-positioned.
+ * keepPositions = false → used on tab switch when the schema changed: full
+ *                          fresh auto-layout (same as first render).
+ *
+ * In both cases, if the input hasn't changed since the last render the call
+ * is a no-op so positions are always preserved across tab switches.
+ */
+function updateDiagram(keepPositions = false) {
+    const src = inputEl.value;
+    // Nothing changed — preserve the current layout exactly as-is.
+    if (x6graph && src === lastRenderedInput) return;
     try {
-        renderERD(quicksql.toERD(inputEl.value));
+        const data = quicksql.toERD(src);
+        lastRenderedInput = src;
+        lastErdData = data;
+
+        if (keepPositions && x6graph) {
+            // Smart update: capture what the user has already dragged, compute
+            // positions only for tables that don't exist in the graph yet.
+            capturePositions();
+            const freshPos = computeLayout(data);
+            for (const item of data.items) {
+                if (!lastErdPos.has(item.name))
+                    lastErdPos.set(item.name, freshPos.get(item.name) || { x: 0, y: 0 });
+            }
+            renderErdCells(data, true);
+        } else {
+            // Full fresh layout (first render, or tab switch after editing).
+            renderERD(data);
+        }
     } catch (e) {
-        // Show error inside the ERD pane (DDL error bar handles parse errors)
         erdContainer.innerHTML =
             `<div style="padding:20px;color:#f48771;font-size:12px;white-space:pre-wrap">`
             + `Errore diagramma:\n${e && e.message ? e.message : e}</div>`;
-        x6graph = null;   // force re-init on next attempt
+        x6graph = null;
+        lastRenderedInput = null;
     }
 }
 
-// Tab switching
-// requestAnimationFrame ensures the pane is visible (layout computed)
-// before X6 reads container dimensions.
+// Tab switching — full layout reset only when schema actually changed.
+// requestAnimationFrame ensures the pane is visible before X6 reads dimensions.
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         const tab = btn.dataset.tab;
@@ -897,11 +928,11 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
             b.classList.toggle('active', b.dataset.tab === tab));
         document.querySelectorAll('.tab-pane').forEach(p =>
             p.classList.toggle('active', p.dataset.tab === tab));
-        if (tab === 'erd') requestAnimationFrame(updateDiagram);
+        if (tab === 'erd') requestAnimationFrame(() => updateDiagram(true));
     });
 });
 
-// DDL update — does NOT refresh diagram (preserves drag positions while editing)
+// Live text update — also keeps the ERD in sync when that tab is open.
 function update() {
     const src = inputEl.value;
     qsHl.innerHTML = highlightQuickSQL(src) + '\n ';
@@ -915,6 +946,8 @@ function update() {
         errorEl.style.display = 'block';
         statusEl.textContent  = 'errore di sintassi';
     }
+    // If the ERD tab is visible, update the diagram in place (preserving drag positions).
+    if (activeTab === 'erd') updateDiagram(true);
 }
 
 inputEl.addEventListener('scroll', () => {
