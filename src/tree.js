@@ -858,7 +858,7 @@ let tree = (function(){
                 const cname = this.getExplicitPkName();
                 return this.findChild(cname).parseType(pure=>true);
             }
-            return 'number';
+            return 'integer';
         }
 
         this.lateInitFks = function() {
@@ -1660,10 +1660,10 @@ let tree = (function(){
             if( idColName == null ) {
                 idColName = this.getExplicitPkName();
             }
-            ret += tab+tab+'p_'+idColName+'        in  number'+modifier;
-            for( var fk in this.fks ) {	
-                let parent = this.fks[fk];				
-                let type = 'number';
+            ret += tab+tab+'p_'+idColName+'        in  '+this.getPkType()+modifier;
+            for( var fk in this.fks ) {
+                let parent = this.fks[fk];
+                let type = 'integer';
                 let refNode = ddl.find(parent);
                 if( refNode != null && refNode.getExplicitPkName() != null )
                     type = refNode.getPkType();
@@ -1721,7 +1721,7 @@ let tree = (function(){
                 ret += ' \n';
                 return ret;
             }
-            let prelude =    tab+tab+'for c1 in (select * from '+objName+' where '+idColName+' = p_'+idColName+') loop \n';
+            let prelude = '';
             if( kind == 'insert' ) {
                 prelude =    tab+tab+'insert into '+objName+' ( \n';
                 prelude += tab+tab+tab+idColName;
@@ -1740,11 +1740,11 @@ let tree = (function(){
                 //pad = tab+tab+' '.repeat(this.maxChildNameLen() - fk.length);
                 if( kind == 'insert' || kind == 'update' ) 
                     ret += ',\n';
-                let row = tab+tab+tab+'P_'+fk+' := c1.'+fk+';\n';	
-                if( kind == 'insert' ) 
+                let row = '';
+                if( kind == 'insert' )
                     row = tab+tab+tab+fk;
-                if( kind == 'update' ) 
-                    row = tab+tab+tab+fk+' = P_'+fk;	
+                if( kind == 'update' )
+                    row = tab+tab+tab+fk+' = P_'+fk;
                 ret += row;
             }
             for( var i = 0; i < this.children.length; i++ ) {
@@ -1755,11 +1755,11 @@ let tree = (function(){
                     continue;
                 if( kind == 'insert' || kind == 'update' ) 
                     ret += ',\n';
-                let row = tab+tab+tab+'P_'+child.parseName().toLowerCase()+' := c1.'+child.parseName().toLowerCase()+';\n';	
-                if( kind == 'insert' ) 
+                let row = '';
+                if( kind == 'insert' )
                     row = tab+tab+tab+child.parseName().toLowerCase();
-                if( kind == 'update' ) 
-                    row = tab+tab+tab+child.parseName().toLowerCase()+' = P_'+child.parseName().toLowerCase();	
+                if( kind == 'update' )
+                    row = tab+tab+tab+child.parseName().toLowerCase()+' = P_'+child.parseName().toLowerCase();
                 ret += row;
             }
             if( kind == 'insert' ) {
@@ -1779,7 +1779,7 @@ let tree = (function(){
                     ret += tab+tab+tab+'p_'+child.parseName();
                 }
             }
-            let finale = '\n        end loop;\n';
+            let finale = '';
             if( kind == 'insert' )
                 finale = '\n'+tab+tab+');';
             if( kind == 'update' )
@@ -1805,7 +1805,7 @@ let tree = (function(){
                 idColName = this.getExplicitPkName();
             }
             ret += '    procedure delete_row (\n'+
-                '        p_'+idColName+'              in number\n'+
+                '        p_'+idColName+'              in integer\n'+
                 '    );\n'+
                 'end '+objName.toLowerCase()+'_api;\n'+
                 '/\n\n';
@@ -1823,7 +1823,7 @@ let tree = (function(){
             ret += this.procBody('update'); 
 
             ret += '    procedure delete_row (\n';
-            ret += '        p_'+idColName+'              in number\n';
+            ret += '        p_'+idColName+'              in integer\n';
             ret += '    )\n';
             ret += '    is\n';
             ret += '    begin\n';
