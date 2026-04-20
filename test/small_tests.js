@@ -958,7 +958,8 @@ view dept_v dept {Purpose 'reporting', Classification 'HR'}`).getDDL();
     finding vc(200)
     severity vc(20)`).getDDL();
     assert( "0 < output.indexOf('before update or delete')" );
-    assert( "0 < output.indexOf('raise_application_error(-20055')" );
+    assert( "0 < output.indexOf('co_immutable_err')" );
+    assert( "0 < output.indexOf('raise_application_error(co_immutable_err, co_immutable_msg)')" );
     assert( "0 < output.indexOf('trg_inspection_p_insertonly')" );
     assert( "0 < output.indexOf('inspection_p is immutable')" );
 

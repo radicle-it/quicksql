@@ -1487,21 +1487,23 @@ let tree = (function(){
         }
 
 
+        // G-7730 / G-7740: separate BI and BU triggers instead of a single BIU trigger
         this.generateTrigger = function() {
-            if( this.parseType() != 'table' )
-                return '';
-            if( this.isOption('soda') )
-                return '';
-            let editionable = '';
-            if( ddl.optionEQvalue('editionable','yes') )
-                editionable = ' editionable';
-            let objName = ddl.objPrefix()  + this.parseName();
-            var ret = 'create or replace'+editionable+' trigger '+ objName.toLowerCase() +'_BIU\n'.toLowerCase();
-            ret += this.isOption('immutable') ? '    before insert\n' : '    before insert or update\n';
-            ret += '    on '+ objName.toLowerCase() +'\n';
+            if( this.parseType() != 'table' ) return '';
+            if( this.isOption('soda') ) return '';
+            return this._generateBITrigger() + this._generateBUTrigger();
+        };
+
+        this._generateBITrigger = function() {
+            let editionable = ddl.optionEQvalue('editionable','yes') ? ' editionable' : '';
+            let objName = (ddl.objPrefix() + this.parseName()).toLowerCase();
+            var ret = 'create or replace'+editionable+' trigger '+objName+'_bi\n';
+            ret += '    before insert\n';
+            ret += '    on '+objName+'\n';
             ret += '    for each row\n';
 
-           if( ddl.optionEQvalue('rowkey','yes') || this.isOption('rowkey') )  {
+            // G-4320: WHILE loop label inside compress_int
+            if( ddl.optionEQvalue('rowkey','yes') || this.isOption('rowkey') )  {
                 ret += `declare
     function compress_int (n in integer ) return varchar2
     as
@@ -1511,6 +1513,7 @@ let tree = (function(){
         digit     char(1);
     begin
         ret := null; quotient := n;
+        <<compress_loop>>
         while quotient > 0
         loop
             remainder := mod(quotient, 10 + 26);
@@ -1521,7 +1524,7 @@ let tree = (function(){
                 digit := chr(ascii('0') + remainder - 26);
             end if;
             ret := digit || ret;
-        end loop ;
+        end loop compress_loop;
         if length(ret) < 5 then ret := lpad(ret, 4, 'A'); end if ;
         return upper(ret);
     end compress_int;
@@ -1534,52 +1537,33 @@ let tree = (function(){
                 user = 'coalesce(sys_context(\'APEX$SESSION\',\'APP_USER\'),user)';
             }
             if( ddl.optionEQvalue('rowkey','yes') || this.isOption('rowkey') )  {
-                ret += '    if inserting then\n';
-                ret += '        :new.row_key := compress_int(row_key_seq.nextval);\n';
-                ret += '    end if;\n';
+                ret += '    :new.row_key := compress_int(row_key_seq.nextval);\n';
                 OK = true;
             }
             for( var i = 0; i < this.children.length; i++ ) {
-                var child = this.children[i]; 
+                var child = this.children[i];
                 let method = null;
-                if( 0 < child.content.indexOf('/lower') ) 
+                if( 0 < child.content.indexOf('/lower') )
                     method = 'LOWER'.toLowerCase();
-                else if( 0 < child.content.indexOf('/upper') ) 
+                else if( 0 < child.content.indexOf('/upper') )
                     method = 'UPPER'.toLowerCase();
-                if( method == null )
-                    continue;
+                if( method == null ) continue;
                 ret += '    :new.'+child.parseName().toLowerCase()+' := '+method+'(:new.'+child.parseName().toLowerCase()+');\n';
                 OK = true;
             }
             if( ddl.optionEQvalue('Row Version Number','yes') || this.isOption('rowversion') )  {
-                ret += '    if inserting then\n';
-                ret += '        :new.row_version := 1;\n';
-                if( !this.isOption('immutable') ) {
-                    ret += '    elsif updating then\n';
-                    ret += '        :new.row_version := NVL(:old.row_version, 0) + 1;\n';
-                }
-                ret += '    end if;\n';
+                ret += '    :new.row_version := 1;\n';
                 OK = true;
             }
             if( ddl.optionEQvalue('Audit Columns','yes') || this.isOption('auditcols') || this.isOption('audit','col') || this.isOption('audit','cols') || this.isOption('audit','columns') ) {
                 let auditDateType = ddl.getOptionValue('auditdate') || ddl.getOptionValue('Date Data Type');
                 let sysDateFn = (auditDateType.toLowerCase().indexOf('timestamp') >= 0) ? 'systimestamp' : 'sysdate';
-                ret += '    if inserting then\n';
-                ret += '        :new.'+ddl.getOptionValue('createdcol')+' := '+sysDateFn+';\n';
-                ret += '        :new.'+ddl.getOptionValue('createdbycol')+' := '+user+';\n'.toLowerCase();
-                ret += '    end if;\n';
+                ret += '    :new.'+ddl.getOptionValue('createdcol')+' := '+sysDateFn+';\n';
+                ret += '    :new.'+ddl.getOptionValue('createdbycol')+' := '+user+';\n';
                 ret += '    :new.'+ddl.getOptionValue('updatedcol')+' := '+sysDateFn+';\n';
-                ret += '    :new.'+ddl.getOptionValue('updatedbycol')+' := '+user+';\n'.toLowerCase();
+                ret += '    :new.'+ddl.getOptionValue('updatedbycol')+' := '+user+';\n';
                 OK = true;
             }
-            /*if( ddl.optionEQvalue('genpk','yes') perhaps 'no'?
-                && ddl.optionEQvalue('pk','guid')  
-            )  {
-                ret += '    if :new.id is null then\n';
-                ret += '        :new.id := to_number(sys_guid(), \'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\');\n';
-                ret += '    end if;\n';
-                OK = true;
-            }*/
             var cols = ddl.additionalColumns();
             for( var col in cols ) {
                 var type = cols[col];
@@ -1591,9 +1575,53 @@ let tree = (function(){
                 ret += '    end if;\n';
                 OK = true;
             }
-            if( !OK )
-                return '';
-            ret += 'end ' + objName .toLowerCase()+ '_BIU;\n/\n\n'.toLowerCase();
+            if( !OK ) return '';
+            ret += 'end '+objName+'_bi;\n/\n\n';
+            return ret;
+        };
+
+        this._generateBUTrigger = function() {
+            if( this.isOption('immutable') ) return '';
+            var hasLowerUpper = false;
+            for( var i = 0; i < this.children.length; i++ ) {
+                if( 0 < this.children[i].content.indexOf('/lower') || 0 < this.children[i].content.indexOf('/upper') ) {
+                    hasLowerUpper = true; break;
+                }
+            }
+            const hasRowVersion = ddl.optionEQvalue('Row Version Number','yes') || this.isOption('rowversion');
+            const hasAuditCols  = ddl.optionEQvalue('Audit Columns','yes') || this.isOption('auditcols')
+                                || this.isOption('audit','col') || this.isOption('audit','cols') || this.isOption('audit','columns');
+            if( !hasLowerUpper && !hasRowVersion && !hasAuditCols ) return '';
+            let editionable = ddl.optionEQvalue('editionable','yes') ? ' editionable' : '';
+            let objName = (ddl.objPrefix() + this.parseName()).toLowerCase();
+            var ret = 'create or replace'+editionable+' trigger '+objName+'_bu\n';
+            ret += '    before update\n';
+            ret += '    on '+objName+'\n';
+            ret += '    for each row\n';
+            ret += 'begin\n';
+            var user = ddl.optionEQvalue('apex','yes')
+                ? 'coalesce(sys_context(\'APEX$SESSION\',\'APP_USER\'),user)'
+                : 'user';
+            for( var i = 0; i < this.children.length; i++ ) {
+                var child = this.children[i];
+                let method = null;
+                if( 0 < child.content.indexOf('/lower') )
+                    method = 'LOWER'.toLowerCase();
+                else if( 0 < child.content.indexOf('/upper') )
+                    method = 'UPPER'.toLowerCase();
+                if( method == null ) continue;
+                ret += '    :new.'+child.parseName().toLowerCase()+' := '+method+'(:new.'+child.parseName().toLowerCase()+');\n';
+            }
+            if( hasRowVersion ) {
+                ret += '    :new.row_version := nvl(:old.row_version, 0) + 1;\n';
+            }
+            if( hasAuditCols ) {
+                let auditDateType = ddl.getOptionValue('auditdate') || ddl.getOptionValue('Date Data Type');
+                let sysDateFn = (auditDateType.toLowerCase().indexOf('timestamp') >= 0) ? 'systimestamp' : 'sysdate';
+                ret += '    :new.'+ddl.getOptionValue('updatedcol')+' := '+sysDateFn+';\n';
+                ret += '    :new.'+ddl.getOptionValue('updatedbycol')+' := '+user+';\n';
+            }
+            ret += 'end '+objName+'_bu;\n/\n\n';
             return ret;
         };
 
@@ -1607,11 +1635,15 @@ let tree = (function(){
             if( dbVer != null && 0 < dbVer.length && 23 <= getMajorVersion(dbVer) )
                 return '';
             let objName = ddl.objPrefix()  + this.parseName();
+            // G-5050: no hardcoded error numbers — use named constants in the declare section
             let ret = 'create or replace trigger trg_'+ objName.toLowerCase() +'_insertonly\n';
             ret += '    before update or delete\n';
             ret += '    on '+ objName.toLowerCase() +'\n';
+            ret += 'declare\n';
+            ret += '    co_immutable_err  constant pls_integer      := -20055;\n';
+            ret += '    co_immutable_msg  constant varchar2(200 char) := \''+ objName.toLowerCase() +' is immutable\';\n';
             ret += 'begin\n';
-            ret += '    raise_application_error(-20055, \''+ objName.toLowerCase() +' is immutable\');\n';
+            ret += '    raise_application_error(co_immutable_err, co_immutable_msg);\n';
             ret += 'end;\n/\n\n';
             return ret;
         };
@@ -1659,6 +1691,36 @@ let tree = (function(){
             let objName = ddl.objPrefix()  + this.parseName();
             let ret =    tab+'is \n';
             ret +=    tab+'begin \n';
+            // G-4387 / G-3145: use SELECT INTO instead of cursor FOR LOOP for PK lookup (single-row result)
+            if( kind == 'get' ) {
+                const selectCols = [];
+                const intoCols   = [];
+                for( const fk in this.fks ) {
+                    selectCols.push( fk );
+                    intoCols.push(   'p_'+fk );
+                }
+                for( let gi = 0; gi < this.children.length; gi++ ) {
+                    const gchild = this.children[gi];
+                    if( gchild.refId() != null  ) continue;
+                    if( gchild.children.length !== 0 ) continue;
+                    const cn = gchild.parseName().toLowerCase();
+                    selectCols.push( cn );
+                    intoCols.push(   'p_'+cn );
+                }
+                if( selectCols.length > 0 ) {
+                    const pad = tab+tab+'       ';
+                    ret += tab+tab+'select '+selectCols.join( ',\n'+pad )+'\n';
+                    ret += tab+tab+'  into '+intoCols.join(   ',\n'+pad )+'\n';
+                    ret += tab+tab+'  from '+objName+'\n';
+                    ret += tab+tab+' where '+idColName+' = p_'+idColName+';\n';
+                }
+                ret += tab+'exception\n';
+                ret += tab+tab+'when no_data_found then\n';
+                ret += tab+tab+tab+'null;\n';
+                ret += tab+'end get_row;\n';
+                ret += ' \n';
+                return ret;
+            }
             let prelude =    tab+tab+'for c1 in (select * from '+objName+' where '+idColName+' = p_'+idColName+') loop \n';
             if( kind == 'insert' ) {
                 prelude =    tab+tab+'insert into '+objName+' ( \n';
