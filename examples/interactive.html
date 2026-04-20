@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Quick SQL — Interactive</title>
+    <link rel="stylesheet" href="../dist/quick-erd.css">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -140,6 +141,33 @@
             color: var(--text);
         }
 
+        /* ── Tab bar ── */
+        .panel-tabs {
+            display: flex;
+            background: var(--bg-panel);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+        .tab-btn {
+            padding: 5px 16px;
+            background: transparent;
+            border: none;
+            border-right: 1px solid var(--border);
+            color: var(--text-muted);
+            font: inherit;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+        }
+        .tab-btn:hover  { color: var(--text); }
+        .tab-btn.active { color: var(--text); border-bottom-color: #007acc; background: var(--bg); }
+
+        /* ── Tab content panes ── */
+        .tab-pane          { display: none; flex: 1; overflow: hidden; }
+        .tab-pane.active   { display: flex; flex-direction: column; }
+
         /* ── DDL output panel ── */
         #output {
             flex: 1;
@@ -149,6 +177,24 @@
             line-height: 1.65;
             white-space: pre;
             word-wrap: normal;
+        }
+
+        /* ── ERD diagram panel ── */
+        #erd-container {
+            flex: 1;
+            overflow: hidden;
+            /* Dark-theme CSS variables consumed by quick-erd.css */
+            --qs-diagram-font-family: 'Cascadia Code', 'Consolas', monospace;
+            --qs-diagram-table-background-color: #2d2d30;
+            --qs-diagram-table-border-color: #3c3c3c;
+            --qs-diagram-table-separator-color: #3c3c3c;
+            --qs-diagram-table-name-text-color: #4fc1ff;
+            --qs-diagram-table-column-text-color: #d4d4d4;
+            --qs-diagram-table-data-type-text-color: #4ec9b0;
+            --qs-diagram-view-background-color: #1e3a2f;
+            --qs-diagram-view-border-color: #3c3c3c;
+            --qs-diagram-view-text-color: #9cdcfe;
+            --qs-diagram-link-color: rgba(160,160,160,0.7);
         }
 
         /* ── Status footer ── */
@@ -181,7 +227,7 @@
         .sql-constraint { color: var(--sql-constraint); }
     </style>
 </head>
-<body>
+<body class="vscode-dark">
 
 <header>
     <span class="title">Quick SQL</span>
@@ -214,8 +260,16 @@ emp_v = departments employees
     </div>
 
     <div class="panel">
-        <div class="panel-label">DDL Oracle SQL — output</div>
-        <pre id="output"></pre>
+        <div class="panel-tabs">
+            <button class="tab-btn active" data-tab="ddl">DDL Oracle SQL</button>
+            <button class="tab-btn"        data-tab="erd">Diagramma ER</button>
+        </div>
+        <div class="tab-pane active" data-tab="ddl">
+            <pre id="output"></pre>
+        </div>
+        <div class="tab-pane" data-tab="erd">
+            <div id="erd-container"></div>
+        </div>
     </div>
 
 </div>
@@ -224,6 +278,7 @@ emp_v = departments employees
 
 <script type="module">
 import quicksql from '../dist/quick-sql.js';
+import { DiagramPreview } from '../dist/quick-erd.js';
 
 // ════════════════════════════════════════════════════════════════
 //  Utilities
@@ -460,11 +515,52 @@ function highlightSQL(text) {
 //  Wiring
 // ════════════════════════════════════════════════════════════════
 
-const inputEl  = document.getElementById('input');
-const qsHl     = document.getElementById('qs-hl');
-const outputEl = document.getElementById('output');
-const errorEl  = document.getElementById('error');
-const statusEl = document.getElementById('status');
+const inputEl    = document.getElementById('input');
+const qsHl       = document.getElementById('qs-hl');
+const outputEl   = document.getElementById('output');
+const erdContainer = document.getElementById('erd-container');
+const errorEl    = document.getElementById('error');
+const statusEl   = document.getElementById('status');
+
+// ════════════════════════════════════════════════════════════════
+//  Tab switching
+// ════════════════════════════════════════════════════════════════
+
+let activeTab = 'ddl';
+let diagramPreview = null;
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        if (tab === activeTab) return;
+        activeTab = tab;
+        document.querySelectorAll('.tab-btn').forEach(b =>
+            b.classList.toggle('active', b.dataset.tab === tab));
+        document.querySelectorAll('.tab-pane').forEach(p =>
+            p.classList.toggle('active', p.dataset.tab === tab));
+        if (tab === 'erd') updateDiagram();
+    });
+});
+
+// ════════════════════════════════════════════════════════════════
+//  ERD update
+// ════════════════════════════════════════════════════════════════
+
+function updateDiagram() {
+    const src = inputEl.value;
+    try {
+        const erdData = quicksql.toERD(src);
+        if (!diagramPreview) {
+            diagramPreview = new DiagramPreview(erdData, erdContainer);
+        } else {
+            diagramPreview.updateData(erdData);
+        }
+    } catch (_) { /* ignore diagram errors — DDL error bar already shows them */ }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  DDL update
+// ════════════════════════════════════════════════════════════════
 
 function update() {
     const src = inputEl.value;
@@ -484,6 +580,9 @@ function update() {
         errorEl.style.display = 'block';
         statusEl.textContent  = 'errore di sintassi';
     }
+
+    // Keep diagram in sync if it's the active tab
+    if (activeTab === 'erd') updateDiagram();
 }
 
 // Sync textarea scroll → highlight layer
