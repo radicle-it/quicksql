@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Quick SQL — Interactive</title>
-    <link rel="stylesheet" href="../dist/quick-erd.css">
+    <!-- AntV X6 v2 — UMD bundle (local copy) -->
+    <script src="../dist/antv-x6/2.18.1/index.min.js"></script>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -183,18 +184,7 @@
         #erd-container {
             flex: 1;
             overflow: hidden;
-            /* Dark-theme CSS variables consumed by quick-erd.css */
-            --qs-diagram-font-family: 'Cascadia Code', 'Consolas', monospace;
-            --qs-diagram-table-background-color: #2d2d30;
-            --qs-diagram-table-border-color: #3c3c3c;
-            --qs-diagram-table-separator-color: #3c3c3c;
-            --qs-diagram-table-name-text-color: #4fc1ff;
-            --qs-diagram-table-column-text-color: #d4d4d4;
-            --qs-diagram-table-data-type-text-color: #4ec9b0;
-            --qs-diagram-view-background-color: #1e3a2f;
-            --qs-diagram-view-border-color: #3c3c3c;
-            --qs-diagram-view-text-color: #9cdcfe;
-            --qs-diagram-link-color: rgba(160,160,160,0.7);
+            background: var(--bg);
         }
 
         /* ── Status footer ── */
@@ -278,7 +268,7 @@ emp_v = departments employees
 
 <script type="module">
 import quicksql from '../dist/quick-sql.js';
-import { DiagramPreview } from '../dist/quick-erd.js';
+// Graph resolved lazily inside initGraph() — X6 load failure won't break DDL
 
 // ════════════════════════════════════════════════════════════════
 //  Utilities
@@ -512,23 +502,250 @@ function highlightSQL(text) {
 }
 
 // ════════════════════════════════════════════════════════════════
+//  X6 ERD renderer
+// ════════════════════════════════════════════════════════════════
+
+const NODE_W   = 220;
+const HEADER_H = 30;
+const COL_H    = 20;
+const GAP_X    = 80;
+const GAP_Y    = 60;
+const RADIUS   = 4;
+
+function nodeH(item) {
+    return HEADER_H + (item.columns || []).length * COL_H + 1;
+}
+
+/** Build X6 markup + attrs for one ER table node (pure SVG, no foreignObject). */
+function buildNodeDef(item) {
+    const isView = item.type === 'view';
+    const hFill  = isView ? '#1e3a2f' : '#1a2d3d';
+    const hColor = isView ? '#9cdcfe' : '#4fc1ff';
+    const h      = nodeH(item);
+    const cols   = item.columns || [];
+
+    // X6 v2 applies transform="translate(NODE_W/2, h/2)" to every <text> element
+    // in custom node markup, and wraps its content in a <tspan dy="0.3em">.
+    // To place a text baseline at node-space coords (ax, ay):
+    //   x_set = ax - NODE_W/2
+    //   y_set = ay - h/2 - 0.3 * fontSize
+    const cx = NODE_W / 2;
+    const cy = h / 2;
+    const tx = (ax)       => ax - cx;
+    const ty = (ay, fs=12) => ay - cy - 0.3 * fs;
+
+    // Header path: only top-left/top-right corners rounded
+    const hp = `M ${RADIUS} 0 H ${NODE_W - RADIUS} Q ${NODE_W} 0 ${NODE_W} ${RADIUS}`
+             + ` V ${HEADER_H} H 0 V ${RADIUS} Q 0 0 ${RADIUS} 0 Z`;
+
+    const markup = [
+        { tagName: 'rect', selector: 'body'    },
+        { tagName: 'path', selector: 'hdr'     },
+        { tagName: 'text', selector: 'hdr-lbl' },
+        { tagName: 'line', selector: 'divider' },
+    ];
+    const attrs = {
+        body: {
+            width: NODE_W, height: h,
+            fill: '#1e1e1e', stroke: '#3c3c3c', strokeWidth: 1,
+            rx: RADIUS, ry: RADIUS,
+        },
+        hdr: { d: hp, fill: hFill, stroke: 'none' },
+        'hdr-lbl': {
+            text: item.name,
+            x: tx(10),
+            y: ty(HEADER_H / 2 + 4),   // baseline ~centered in 30px header
+            fill: hColor,
+            'font-size': 12, 'font-weight': 'bold',
+            'text-anchor': 'start',
+        },
+        divider: {
+            x1: 0, y1: HEADER_H, x2: NODE_W, y2: HEADER_H,
+            stroke: '#3c3c3c', strokeWidth: 1,
+        },
+    };
+
+    cols.forEach((col, i) => {
+        const y0 = HEADER_H + i * COL_H;
+        const ym = y0 + COL_H / 2;   // vertical midpoint of row
+        markup.push(
+            { tagName: 'rect', selector: `rr${i}` },
+            { tagName: 'text', selector: `cn${i}`  },
+            { tagName: 'text', selector: `ct${i}`  },
+        );
+        attrs[`rr${i}`] = {
+            x: 0, y: y0, width: NODE_W, height: COL_H,
+            fill: i % 2 === 0 ? '#252526' : '#2a2a2d', stroke: 'none',
+        };
+        attrs[`cn${i}`] = {
+            text: col.name,
+            x: tx(8),
+            y: ty(ym, 11),
+            fill: '#d4d4d4',
+            'font-size': 11,
+            'text-anchor': 'start',
+        };
+        attrs[`ct${i}`] = {
+            text: col.datatype || '',
+            x: tx(NODE_W - 8),
+            y: ty(ym, 10),
+            fill: '#4ec9b0',
+            'font-size': 10,
+            'text-anchor': 'end',
+        };
+    });
+
+    return { markup, attrs, width: NODE_W, height: h };
+}
+
+/** Hierarchical BFS layout: root tables at top, FK children below. */
+function computeLayout(data) {
+    const { items, links } = data;
+    const childOf  = new Map(items.map(i => [i.name, []]));
+    const parentOf = new Map(items.map(i => [i.name, []]));
+
+    for (const { source, target } of links) {
+        childOf.get(source)?.push(target);
+        parentOf.get(target)?.push(source);
+    }
+
+    const level = new Map();
+    const queue = items
+        .filter(i => !(parentOf.get(i.name) || []).length)
+        .map(i => [i.name, 0]);
+    if (!queue.length && items.length) queue.push([items[0].name, 0]);
+
+    while (queue.length) {
+        const [name, lv] = queue.shift();
+        if (level.has(name) && level.get(name) >= lv) continue;
+        level.set(name, lv);
+        for (const c of (childOf.get(name) || [])) queue.push([c, lv + 1]);
+    }
+    for (const { name } of items) if (!level.has(name)) level.set(name, 0);
+
+    const byLv = new Map();
+    for (const [name, lv] of level) {
+        if (!byLv.has(lv)) byLv.set(lv, []);
+        byLv.get(lv).push(name);
+    }
+
+    const nameToItem = new Map(items.map(i => [i.name, i]));
+    const pos = new Map();
+    let y = 0;
+    for (const [, names] of [...byLv.entries()].sort(([a], [b]) => a - b)) {
+        const maxH = Math.max(...names.map(n => nodeH(nameToItem.get(n) || { columns: [] })));
+        let x = 0;
+        for (const name of names) { pos.set(name, { x, y }); x += NODE_W + GAP_X; }
+        y += maxH + GAP_Y;
+    }
+    return pos;
+}
+
+let x6graph = null;
+
+function initGraph() {
+    if (x6graph) return;
+    const X6 = window.X6;
+    if (!X6 || !X6.Graph) {
+        erdContainer.innerHTML =
+            '<div style="padding:20px;color:#f48771;font-size:12px">'
+            + 'X6 non caricato — controlla il percorso di dist/antv-x6/2.18.1/index.min.js</div>';
+        return;
+    }
+    const { Graph } = X6;
+    // Read actual pixel dimensions at init time — container must be visible
+    const w = erdContainer.clientWidth  || 800;
+    const h = erdContainer.clientHeight || 600;
+    x6graph = new Graph({
+        container: erdContainer,
+        width:  w,
+        height: h,
+        background: { color: '#1e1e1e' },
+        grid: false,
+        mousewheel: {
+            enabled: true,
+            zoomAtMousePosition: true,
+            factor: 1.1,
+            minScale: 0.15,
+            maxScale: 4,
+        },
+        panning:     { enabled: true },
+        interacting: { nodeMovable: true },
+        connecting:  { enabled: false },
+    });
+}
+
+function renderERD(data) {
+    initGraph();
+    if (!x6graph) return;           // initGraph failed (X6 not loaded)
+    x6graph.clearCells();           // v2: clearCells(), not clear()
+
+    const pos = computeLayout(data);
+    for (const item of data.items) {
+        const { x, y } = pos.get(item.name) || { x: 0, y: 0 };
+        x6graph.addNode({ id: item.name, x, y, ...buildNodeDef(item) });
+    }
+
+    const edgeAttrs = {
+        line: {
+            stroke: 'rgba(180,180,180,0.5)',
+            strokeWidth: 1.5,
+            sourceMarker: null,
+            targetMarker: {
+                tagName: 'path',
+                // crow's foot: open fork at target
+                d: 'M 0 -5 L -12 0 L 0 5 M -12 -5 L -12 5',
+                stroke: 'rgba(180,180,180,0.65)',
+                fill: 'none',
+                strokeWidth: 1.5,
+            },
+        },
+    };
+    for (const { source, target } of data.links) {
+        try {
+            x6graph.addEdge({
+                source:    { cell: source },
+                target:    { cell: target },
+                attrs:     edgeAttrs,
+                router:    { name: 'orth' },
+                connector: { name: 'rounded', args: { radius: 6 } },
+            });
+        } catch (_) { /* skip invalid refs */ }
+    }
+
+    // v2: fitToContent centers around actual content
+    x6graph.zoomToFit({ padding: 40, maxScale: 1 });
+    x6graph.centerContent();
+}
+
+// ════════════════════════════════════════════════════════════════
 //  Wiring
 // ════════════════════════════════════════════════════════════════
 
-const inputEl    = document.getElementById('input');
-const qsHl       = document.getElementById('qs-hl');
-const outputEl   = document.getElementById('output');
+const inputEl      = document.getElementById('input');
+const qsHl         = document.getElementById('qs-hl');
+const outputEl     = document.getElementById('output');
 const erdContainer = document.getElementById('erd-container');
-const errorEl    = document.getElementById('error');
-const statusEl   = document.getElementById('status');
-
-// ════════════════════════════════════════════════════════════════
-//  Tab switching
-// ════════════════════════════════════════════════════════════════
+const errorEl      = document.getElementById('error');
+const statusEl     = document.getElementById('status');
 
 let activeTab = 'ddl';
-let diagramPreview = null;
 
+function updateDiagram() {
+    try {
+        renderERD(quicksql.toERD(inputEl.value));
+    } catch (e) {
+        // Show error inside the ERD pane (DDL error bar handles parse errors)
+        erdContainer.innerHTML =
+            `<div style="padding:20px;color:#f48771;font-size:12px;white-space:pre-wrap">`
+            + `Errore diagramma:\n${e && e.message ? e.message : e}</div>`;
+        x6graph = null;   // force re-init on next attempt
+    }
+}
+
+// Tab switching
+// requestAnimationFrame ensures the pane is visible (layout computed)
+// before X6 reads container dimensions.
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         const tab = btn.dataset.tab;
@@ -538,38 +755,14 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
             b.classList.toggle('active', b.dataset.tab === tab));
         document.querySelectorAll('.tab-pane').forEach(p =>
             p.classList.toggle('active', p.dataset.tab === tab));
-        if (tab === 'erd') updateDiagram();
+        if (tab === 'erd') requestAnimationFrame(updateDiagram);
     });
 });
 
-// ════════════════════════════════════════════════════════════════
-//  ERD update
-// ════════════════════════════════════════════════════════════════
-
-function updateDiagram() {
-    const src = inputEl.value;
-    try {
-        const erdData = quicksql.toERD(src);
-        if (!diagramPreview) {
-            diagramPreview = new DiagramPreview(erdData, erdContainer);
-        } else {
-            diagramPreview.updateData(erdData);
-        }
-    } catch (_) { /* ignore diagram errors — DDL error bar already shows them */ }
-}
-
-// ════════════════════════════════════════════════════════════════
-//  DDL update
-// ════════════════════════════════════════════════════════════════
-
+// DDL update — does NOT refresh diagram (preserves drag positions while editing)
 function update() {
     const src = inputEl.value;
-
-    // Update Quick SQL highlighting (overlay)
-    // Extra '\n ' at end prevents last-line clipping in <pre>
     qsHl.innerHTML = highlightQuickSQL(src) + '\n ';
-
-    // Translate to DDL
     try {
         const ddl = quicksql.toDDL(src);
         outputEl.innerHTML = highlightSQL(ddl) + '\n ';
@@ -580,18 +773,13 @@ function update() {
         errorEl.style.display = 'block';
         statusEl.textContent  = 'errore di sintassi';
     }
-
-    // Keep diagram in sync if it's the active tab
-    if (activeTab === 'erd') updateDiagram();
 }
 
-// Sync textarea scroll → highlight layer
 inputEl.addEventListener('scroll', () => {
     qsHl.scrollTop  = inputEl.scrollTop;
     qsHl.scrollLeft = inputEl.scrollLeft;
 });
 
-// Tab key inserts spaces instead of losing focus
 inputEl.addEventListener('keydown', e => {
     if (e.key !== 'Tab') return;
     e.preventDefault();
