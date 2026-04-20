@@ -877,49 +877,54 @@ const statusEl     = document.getElementById('status');
 
 let activeTab = 'ddl';
 let lastRenderedInput = null;   // quicksql text last used to build the diagram
+let erdDebounceTimer  = null;   // debounce handle for live-typing ERD updates
 
 /**
  * Update the ERD diagram.
- *
- * keepPositions = true  → used during live typing: existing nodes stay where
- *                          the user dragged them; only new nodes get auto-positioned.
- * keepPositions = false → used on tab switch when the schema changed: full
- *                          fresh auto-layout (same as first render).
- *
- * In both cases, if the input hasn't changed since the last render the call
- * is a no-op so positions are always preserved across tab switches.
+ * keepPositions = true  → smart update: existing nodes keep their dragged positions.
+ * keepPositions = false → full fresh auto-layout (first render only).
+ * No-op when input hasn't changed since the last successful render.
  */
 function updateDiagram(keepPositions = false) {
     const src = inputEl.value;
-    // Nothing changed — preserve the current layout exactly as-is.
     if (x6graph && src === lastRenderedInput) return;
     try {
         const data = quicksql.toERD(src);
+        // Snapshot previous item list BEFORE overwriting lastErdData so we can
+        // bridge positions when settings change table names (prefix / schema).
+        const prevItems = lastErdData ? lastErdData.items : [];
         lastRenderedInput = src;
         lastErdData = data;
 
         if (keepPositions && x6graph) {
-            // Smart update: capture what the user has already dragged, compute
-            // positions only for tables that don't exist in the graph yet.
-            capturePositions();
+            // lastErdPos already has positions captured when the user left the tab
+            // (or from the previous debounced update). For each new item:
+            //   1. Exact name match — keep the stored position.
+            //   2. Same-index fallback — handles settings changes that rename all
+            //      tables consistently (e.g. adding prefix:"app" or schema:"s").
+            //   3. Fresh layout position for genuinely new tables.
             const freshPos = computeLayout(data);
-            for (const item of data.items) {
-                if (!lastErdPos.has(item.name))
+            for (let idx = 0; idx < data.items.length; idx++) {
+                const item = data.items[idx];
+                if (lastErdPos.has(item.name)) continue;                // ① exact
+                const prev = prevItems[idx];
+                if (prev && lastErdPos.has(prev.name)) {                // ② same index
+                    lastErdPos.set(item.name, lastErdPos.get(prev.name));
+                } else {                                                  // ③ fresh
                     lastErdPos.set(item.name, freshPos.get(item.name) || { x: 0, y: 0 });
+                }
             }
             renderErdCells(data, true);
         } else {
-            // Full fresh layout (first render, or tab switch after editing).
-            renderERD(data);
+            renderERD(data);   // first render: compute full fresh layout
         }
     } catch (e) {
+        // Transient error (e.g. mid-typing invalid JSON in # settings).
+        // Leave the graph and lastRenderedInput untouched so the next
+        // successful parse will still find the correct positions in lastErdPos.
         if (x6graph) {
-            // Transient error (e.g. mid-typing invalid JSON in # settings).
-            // Keep the graph and lastRenderedInput untouched so the next
-            // successful parse can still do a smart update with preserved positions.
             statusEl.textContent = 'ERD: ' + (e && e.message ? e.message : e).toString().slice(0, 100);
         } else {
-            // No graph at all yet — show the error inside the container.
             erdContainer.innerHTML =
                 `<div style="padding:20px;color:#f48771;font-size:12px;white-space:pre-wrap">`
                 + `Errore diagramma:\n${e && e.message ? e.message : e}</div>`;
@@ -927,12 +932,16 @@ function updateDiagram(keepPositions = false) {
     }
 }
 
-// Tab switching — full layout reset only when schema actually changed.
-// requestAnimationFrame ensures the pane is visible before X6 reads dimensions.
+// Tab switching.
+// KEY: capture positions the moment the user LEAVES the ERD tab, while the
+// graph is still fully visible and its layout is stable.  If we wait until
+// the tab becomes visible again, X6 may have already adjusted node positions
+// in response to the container going display:none → display:flex.
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
         const tab = btn.dataset.tab;
         if (tab === activeTab) return;
+        if (activeTab === 'erd') capturePositions();   // ← snapshot before hiding
         activeTab = tab;
         document.querySelectorAll('.tab-btn').forEach(b =>
             b.classList.toggle('active', b.dataset.tab === tab));
@@ -942,7 +951,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     });
 });
 
-// Live text update — also keeps the ERD in sync when that tab is open.
+// Live text update.
 function update() {
     const src = inputEl.value;
     qsHl.innerHTML = highlightQuickSQL(src) + '\n ';
@@ -956,8 +965,17 @@ function update() {
         errorEl.style.display = 'block';
         statusEl.textContent  = 'errore di sintassi';
     }
-    // If the ERD tab is visible, update the diagram in place (preserving drag positions).
-    if (activeTab === 'erd') updateDiagram(true);
+    // Debounce ERD updates: wait 350 ms after the last keystroke before
+    // refreshing the diagram.  This prevents mid-typing resets (e.g. when
+    // # settings JSON is temporarily incomplete) and avoids rapid re-renders.
+    if (activeTab === 'erd') {
+        if (erdDebounceTimer) clearTimeout(erdDebounceTimer);
+        erdDebounceTimer = setTimeout(() => {
+            capturePositions();          // snapshot current dragged positions
+            erdDebounceTimer = null;
+            updateDiagram(true);
+        }, 350);
+    }
 }
 
 inputEl.addEventListener('scroll', () => {
