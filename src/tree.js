@@ -934,50 +934,18 @@ let tree = (function(){
             } //...else   -- too lae to do here, performed earlier, during recognize()
         }
 
-        this.singleDDL = function() {
-            
-            if( this.children.length == 0 && 0 < this.apparentDepth() ) {
-                let pad = tab;
-                if( this.parent != undefined )
-                    pad += ' '.repeat(this.parent.maxChildNameLen() - this.parseName().length);
-                return this.parseName()+pad+this.parseType();
-            }
+        this._genSequence = function(objName) {
+            if( ddl.optionEQvalue('pk', 'SEQ') && ddl.optionEQvalue('genpk', true) )
+                return 'create sequence  '+objName+'_seq;\n\n';
+            return '';
+        };
 
-            this.lateInitFks();
-
-            const objName = ddl.objPrefix()  + this.parseName();
-
-            // SODA collection: fixed schema, skip normal column generation
-            if( this.isOption('soda') ) {
-                let ret = 'create table '+objName+' (\n';
-                ret += tab + 'id              varchar2(255'+ddl.semantics()+') not null\n';
-                ret += tab + '                constraint '+objName+'_id_pk primary key,\n';
-                ret += tab + 'created_on      timestamp default sys_extract_utc(systimestamp) not null,\n';
-                ret += tab + 'last_modified   timestamp default sys_extract_utc(systimestamp) not null,\n';
-                ret += tab + 'version         varchar2(255'+ddl.semantics()+') not null,\n';
-                ret += tab + 'json_document   json\n';
-                ret += ');\n\n';
-                return ret;
-            }
-
-            //var indexedColumns = [];
-            var ret = '';
-            if( ddl.optionEQvalue('pk', 'SEQ') && ddl.optionEQvalue('genpk', true) ) {
-                ret =  ret + 'create sequence  '+objName+'_seq;\n\n';                
-            }
-
-            const _dbVer = ddl.getOptionValue('db');
-            const _db23plus = _dbVer != null && 0 < _dbVer.length && 23 <= getMajorVersion(_dbVer);
-            let immutableKeyword = '';
-            if( this.isOption('immutable') && _db23plus )
-                immutableKeyword = 'immutable ';
-            ret =  ret + 'create '+immutableKeyword+'table '+objName+' (\n';
+        this._genTableHeader = function(objName, immutableKeyword, idColName) {
+            let ret = 'create '+immutableKeyword+'table '+objName+' (\n';
             var pad = tab+' '.repeat(this.maxChildNameLen() - 'ID'.length);
-
-            let idColName = this.getGenIdColName();
             if( idColName != null && !this.isOption('pk') ) {
                 ret += tab +  idColName + pad + 'number ' + pkTypeModifier(objName) + '\n';
-                const obj_col = concatNames(ddl.objPrefix('no schema')  + this.parseName(),'_',idColName);  
+                const obj_col = concatNames(ddl.objPrefix('no schema')  + this.parseName(),'_',idColName);
                 ret += tab +  tab+' '.repeat(this.maxChildNameLen()) +'constraint '+concatNames(obj_col,'_pk')+' primary key,\n';
             } else {
                 let pkName = this.getExplicitPkName();
@@ -990,7 +958,11 @@ let tree = (function(){
                     ret += tab +  pkName + pad + type + ',\n';
                 }
             }
- 
+            return ret;
+        };
+
+        this._genFkColumns = function(objName) {
+            let ret = '';
             for( let fk in this.fks ) {
                 let parent = this.fks[fk];
                 if( 0 < fk.indexOf(',') ) {
@@ -1001,30 +973,30 @@ let tree = (function(){
                         if( col == ',' )
                             continue;
                         const pChild = refNode.findChild(col);
-                        pad = tab+' '.repeat(this.maxChildNameLen() - col.length);
-                        ret += tab + col   + pad + pChild.parseType(pure=>true) + ',\n';  
+                        let pad = tab+' '.repeat(this.maxChildNameLen() - col.length);
+                        ret += tab + col   + pad + pChild.parseType(pure=>true) + ',\n';
                     }
                     continue;
                 }
                 let type = 'number';
                 const attr = this.findChild(fk);
                 if( attr != null )
-                    type = attr.parseType('fk');		
+                    type = attr.parseType('fk');
                 let refNode = ddl.find(parent);
-                let _id = ''; 
+                let _id = '';
                 if( refNode != null ) {
-                    const rname = refNode.getExplicitPkName();  
-                    if( rname != null && rname.indexOf(',') < 0 )
-                        type = refNode.getPkType();  
+                    const rname = refNode.getExplicitPkName();
+                    if( rname != null && rname.indexOf(',') < 0 )
+                        type = refNode.getPkType();
                 } else {
                     refNode = ddl.find(fk);
                     if( refNode.isMany2One() & !fk.endsWith('_id') ) {
                         parent = fk;
                         fk = singular(fk);
-                        _id = '_id';  
+                        _id = '_id';
                     }
                 }
-                pad = tab+' '.repeat(this.maxChildNameLen() - fk.length);
+                let pad = tab+' '.repeat(this.maxChildNameLen() - fk.length);
                 ret += tab + fk + _id  + pad + type;
                 const refPrefix = ddl.find(parent) != null ? ddl.objPrefix() : '';
                 if( refNode.line < this.line || refNode.isMany2One() ) {
@@ -1057,13 +1029,19 @@ let tree = (function(){
                     }
                 }
             }
+            return ret;
+        };
 
-            if( this.hasRowKey() ) {
-                let pad = tab+' '.repeat(this.maxChildNameLen() - 'ROW_KEY'.length);
-                ret += tab +  'row_key' + pad + 'varchar2(30'+ddl.semantics()+ ')\n';
-                ret += tab +  tab+' '.repeat(this.maxChildNameLen()) +'constraint '+objName+'_row_key_unq unique not null,\n';
-            }
+        this._genRowKeyColumn = function(objName) {
+            if( !this.hasRowKey() ) return '';
+            let pad = tab+' '.repeat(this.maxChildNameLen() - 'ROW_KEY'.length);
+            let ret = tab +  'row_key' + pad + 'varchar2(30'+ddl.semantics()+ ')\n';
+            ret += tab +  tab+' '.repeat(this.maxChildNameLen()) +'constraint '+objName+'_row_key_unq unique not null,\n';
+            return ret;
+        };
 
+        this._genRegularColumns = function(objName, idColName) {
+            let ret = '';
             for( let i = 0; i < this.children.length; i++ ) {
                 let child = this.children[i];
                 if( idColName != null && child.parseName() == 'id' )
@@ -1073,80 +1051,100 @@ let tree = (function(){
                 }
                 if( child.refId() == null ) {
                     if( child.parseName() == this.getExplicitPkName() )
-                        continue; 
+                        continue;
                     ret += tab + child.singleDDL() +',\n';
                     if( 0 < child.indexOf('file') ) {
                         const col = child.parseName().toUpperCase();
                         let extraCol  = col+'_FILENAME';
                         let pad = tab+' '.repeat(this.maxChildNameLen() - extraCol.length);
-                        ret += tab +  extraCol.toLowerCase() + pad + 'varchar2(255'+ddl.semantics()+ '),\n';  
+                        ret += tab +  extraCol.toLowerCase() + pad + 'varchar2(255'+ddl.semantics()+ '),\n';
                         extraCol  = col+'_MIMETYPE';
                         pad = tab+' '.repeat(this.maxChildNameLen() - extraCol.length);
-                        ret += tab +  extraCol.toLowerCase() + pad + 'varchar2(255'+ddl.semantics()+ '),\n';  
+                        ret += tab +  extraCol.toLowerCase() + pad + 'varchar2(255'+ddl.semantics()+ '),\n';
                         extraCol  = col+'_CHARSET';
                         pad = tab+' '.repeat(this.maxChildNameLen() - extraCol.length);
-                        ret += tab +  extraCol.toLowerCase() + pad + 'varchar2(255'+ddl.semantics()+ '),\n';  
+                        ret += tab +  extraCol.toLowerCase() + pad + 'varchar2(255'+ddl.semantics()+ '),\n';
                         extraCol  = col+'_LASTUPD';
                         pad = tab+' '.repeat(this.maxChildNameLen() - extraCol.length);
-                        ret += tab +  extraCol.toLowerCase() + pad + ddl.getOptionValue('Date Data Type').toLowerCase() + ',\n';  
+                        ret += tab +  extraCol.toLowerCase() + pad + ddl.getOptionValue('Date Data Type').toLowerCase() + ',\n';
                     }
-                } 
+                }
             }
-            if( this.hasRowVersion() ) {
-                let pad = tab+' '.repeat(this.maxChildNameLen() - 'row_version'.length);
-                ret += tab +  'row_version' + pad + 'integer not null,\n';
-            }
-            if( this.hasAuditCols() ) {
-                let auditDateType = ddl.getOptionValue('auditdate');
-                if( auditDateType == null || auditDateType == '' )
-                    auditDateType = ddl.getOptionValue('Date Data Type');
-                auditDateType = auditDateType.toLowerCase();
-                let created = ddl.getOptionValue('createdcol');
-                let pad = tab+' '.repeat(this.maxChildNameLen() - created.length);
-                ret += tab +  created + pad + auditDateType + ' not null,\n';
-                let createdby = ddl.getOptionValue('createdbycol');
-                pad = tab+' '.repeat(this.maxChildNameLen() - createdby.length);
-                ret += tab +  createdby + pad + 'varchar2(255'+ddl.semantics()+') not null,\n';
-                let updated = ddl.getOptionValue('updatedcol');
-                 pad = tab+' '.repeat(this.maxChildNameLen() - updated.length);
-                ret += tab +  updated + pad + auditDateType + ' not null,\n';
-                let updatedby = ddl.getOptionValue('updatedbycol');
-                pad = tab+' '.repeat(this.maxChildNameLen() - updatedby.length);
-                ret += tab +  updatedby + pad + 'varchar2(255'+ddl.semantics()+') not null,\n';
-            }            	
+            return ret;
+        };
+
+        this._genRowVersionColumn = function() {
+            if( !this.hasRowVersion() ) return '';
+            let pad = tab+' '.repeat(this.maxChildNameLen() - 'row_version'.length);
+            return tab +  'row_version' + pad + 'integer not null,\n';
+        };
+
+        this._genAuditColumns = function() {
+            if( !this.hasAuditCols() ) return '';
+            let auditDateType = ddl.getOptionValue('auditdate');
+            if( auditDateType == null || auditDateType == '' )
+                auditDateType = ddl.getOptionValue('Date Data Type');
+            auditDateType = auditDateType.toLowerCase();
+            let ret = '';
+            let created = ddl.getOptionValue('createdcol');
+            let pad = tab+' '.repeat(this.maxChildNameLen() - created.length);
+            ret += tab +  created + pad + auditDateType + ' not null,\n';
+            let createdby = ddl.getOptionValue('createdbycol');
+            pad = tab+' '.repeat(this.maxChildNameLen() - createdby.length);
+            ret += tab +  createdby + pad + 'varchar2(255'+ddl.semantics()+') not null,\n';
+            let updated = ddl.getOptionValue('updatedcol');
+            pad = tab+' '.repeat(this.maxChildNameLen() - updated.length);
+            ret += tab +  updated + pad + auditDateType + ' not null,\n';
+            let updatedby = ddl.getOptionValue('updatedbycol');
+            pad = tab+' '.repeat(this.maxChildNameLen() - updatedby.length);
+            ret += tab +  updatedby + pad + 'varchar2(255'+ddl.semantics()+') not null,\n';
+            return ret;
+        };
+
+        this._genAdditionalColumns = function() {
+            let ret = '';
             var cols = ddl.additionalColumns();
             for( let col in cols ) {
                 var type = cols[col];
-                pad = tab+' '.repeat(this.maxChildNameLen() - col.length);
-                ret += tab +  col.toUpperCase() + pad + type + ' not null,\n';  
+                let pad = tab+' '.repeat(this.maxChildNameLen() - col.length);
+                ret += tab +  col.toUpperCase() + pad + type + ' not null,\n';
             }
-            ret += this.genConstraint();
-            ret = trimTrailingComma(ret);
+            return ret;
+        };
+
+        this._genTableFooter = function(objName, immutableKeyword, _db23plus) {
             let tableAnnotations = this.annotations != null ? '\nannotations (' + this.annotations + ')' : '';
             let compressClause = '';
             if( ddl.optionEQvalue('compress','yes') || this.isOption('compress') )
                 compressClause = _db23plus ? ' row store compress advanced' : ' compress';
             let immutableSuffix = (immutableKeyword != '') ? '\nno drop until 0 days idle\nno delete until 16 days after insert' : '';
             if( immutableSuffix != '' && compressClause != '' ) compressClause = '\n' + compressClause.trimStart();
-            ret += ')'+immutableSuffix+compressClause+tableAnnotations+';\n\n';
-            
+            let ret = ')'+immutableSuffix+compressClause+tableAnnotations+';\n\n';
             if( this.isOption('audit') && !this.isOption('auditcols') &&
                            !this.isOption('audit','col') && !this.isOption('audit','cols') && !this.isOption('audit','columns') ) {
                 ret += 'audit all on '+objName+';\n\n';
             }
-
             if( this.isOption('flashback') || this.isOption('fda') ) {
                 let archiveName = this.getOptionValue('flashback') || this.getOptionValue('fda') || '';
                 archiveName = archiveName.trim();
                 ret += 'alter table '+objName+' flashback archive'+(0 < archiveName.length ? ' '+archiveName : '')+';\n\n';
             }
-     
+            return ret;
+        };
+
+        this._genMultiColFkAlters = function(objName) {
+            let ret = '';
             for( let fk in this.fks ) {
                 if( 0 < fk.indexOf(',') ) {
                     var parent = this.fks[fk];
                     ret +=  'alter table '+objName+' add constraint '+parent+'_'+objName+'_fk foreign key ('+fk+') references '+parent+';\n\n';
                 }
             }
+            return ret;
+        };
+
+        this._genIndexes = function(objName, _db23plus) {
+            let ret = '';
             let num = 1;
             for( let fk in this.fks ) {
                 if( !this.isMany2One() ) {
@@ -1155,14 +1153,14 @@ let tree = (function(){
                     var col = fk;
                     if( col == null )
                         col = singular(ref)+'_id';
-                    if( num == 1 )    
+                    if( num == 1 )
                         ret += '-- table index\n';
                     ret += 'create index '+objName+'_i'+(num++)+' on '+objName+' ('+col+');\n\n';
                 } else {
 
                 }
             }
- 
+
             let cut = this.getOptionValue('pk');
             if( cut /*!= null*/ ) {
                 ret += 'alter table '+objName+' add constraint '+objName+'_pk primary key ('+cut+');\n\n';
@@ -1175,16 +1173,15 @@ let tree = (function(){
                 ret += 'alter table '+objName+' add constraint '+objName+'_uk unique ('+cut+');\n\n';
             }
 
-            //var j = 1;
             for( let i = 0; i < this.children.length; i++ ) {
                 var child = this.children[i];
                 if( child.isOption('idx') || child.isOption('index')  ) {
-                    if( num == 1 )    
+                    if( num == 1 )
                         ret += '-- table index\n';
-                    ret += 'create index '+objName+'_i'+(num++)+' on '+objName+' ('+child.parseName()+');\n'; 
+                    ret += 'create index '+objName+'_i'+(num++)+' on '+objName+' ('+child.parseName()+');\n';
                 }
             }
-            
+
             if( _db23plus ) {
                 for( let i = 0; i < this.children.length; i++ ) {
                     let child = this.children[i];
@@ -1204,6 +1201,11 @@ let tree = (function(){
                 }
             }
 
+            return ret;
+        };
+
+        this._genComments = function(objName) {
+            let ret = '';
             var tableComment = this.getAnnotationValue('DESCRIPTION') || this.comment;
             if( tableComment != null )
                 ret += 'comment on table '+objName+' is \''+tableComment+'\';\n';
@@ -1213,8 +1215,57 @@ let tree = (function(){
                 if( colComment != null && child.children.length == 0 )
                     ret += 'comment on column '+objName+'.'+child.parseName()+' is \''+colComment+'\';\n';
             }
+            return ret;
+        };
+
+        this.singleDDL = function() {
+
+            if( this.children.length == 0 && 0 < this.apparentDepth() ) {
+                let pad = tab;
+                if( this.parent != undefined )
+                    pad += ' '.repeat(this.parent.maxChildNameLen() - this.parseName().length);
+                return this.parseName()+pad+this.parseType();
+            }
+
+            this.lateInitFks();
+
+            const objName = ddl.objPrefix()  + this.parseName();
+
+            // SODA collection: fixed schema, skip normal column generation
+            if( this.isOption('soda') ) {
+                let ret = 'create table '+objName+' (\n';
+                ret += tab + 'id              varchar2(255'+ddl.semantics()+') not null\n';
+                ret += tab + '                constraint '+objName+'_id_pk primary key,\n';
+                ret += tab + 'created_on      timestamp default sys_extract_utc(systimestamp) not null,\n';
+                ret += tab + 'last_modified   timestamp default sys_extract_utc(systimestamp) not null,\n';
+                ret += tab + 'version         varchar2(255'+ddl.semantics()+') not null,\n';
+                ret += tab + 'json_document   json\n';
+                ret += ');\n\n';
+                return ret;
+            }
+
+            const _dbVer = ddl.getOptionValue('db');
+            const _db23plus = _dbVer != null && 0 < _dbVer.length && 23 <= getMajorVersion(_dbVer);
+            let immutableKeyword = '';
+            if( this.isOption('immutable') && _db23plus )
+                immutableKeyword = 'immutable ';
+            const idColName = this.getGenIdColName();
+
+            let ret = this._genSequence(objName);
+            ret += this._genTableHeader(objName, immutableKeyword, idColName);
+            ret += this._genFkColumns(objName);
+            ret += this._genRowKeyColumn(objName);
+            ret += this._genRegularColumns(objName, idColName);
+            ret += this._genRowVersionColumn();
+            ret += this._genAuditColumns();
+            ret += this._genAdditionalColumns();
+            ret += this.genConstraint();
+            ret = trimTrailingComma(ret);
+            ret += this._genTableFooter(objName, immutableKeyword, _db23plus);
+            ret += this._genMultiColFkAlters(objName);
+            ret += this._genIndexes(objName, _db23plus);
+            ret += this._genComments(objName);
             ret += '\n';
-            
             return ret;
         };
 
