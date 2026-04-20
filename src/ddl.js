@@ -389,17 +389,23 @@ export const quicksql = (function () {
 
                 descendants[i].toDDL();    // to setup fks
 
-                for( let fk in descendants[i].fks ) {	
+                for( let fk in descendants[i].fks ) {
                     let parent = descendants[i].fks[fk];
                     let pkNode = this.find(parent);
                     if( pkNode == null )
                         continue;
                     let pk = 'id';
                     if( pkNode.getExplicitPkName() != null )
-                        pk = pkNode.getExplicitPkName();				
- 
+                        pk = pkNode.getExplicitPkName();
+
+                    // mandatory: true when FK is NOT NULL (nested auto-FK or explicit /nn)
+                    const fkAttr = descendants[i].findChild(fk);
+                    const mandatory = fkAttr == null
+                        || fkAttr.isOption('nn') || fkAttr.isOption('notnull');
+
                     output.links.push({source: this.objPrefix() +parent, source_id: pk,
-                                       target: this.objPrefix() + descendants[i].parseName(''), target_id: fk
+                                       target: this.objPrefix() + descendants[i].parseName(''), target_id: fk,
+                                       mandatory
                     });
                 }
             }

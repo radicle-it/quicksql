@@ -505,93 +505,195 @@ function highlightSQL(text) {
 //  X6 ERD renderer
 // ════════════════════════════════════════════════════════════════
 
-const NODE_W   = 220;
-const HEADER_H = 30;
+const NODE_W   = 240;
+const HEADER_H = 32;
 const COL_H    = 20;
-const GAP_X    = 80;
-const GAP_Y    = 60;
-const RADIUS   = 4;
+const GAP_X    = 100;
+const GAP_Y    = 80;
+const RADIUS   = 6;
 
-function nodeH(item) {
-    return HEADER_H + (item.columns || []).length * COL_H + 1;
+// Per-group header palette (hsl-based, dark-mode friendly)
+const GROUP_PALETTE = [
+    { fill: '#162636', text: '#4fc1ff', border: '#1e6aa8' },   // blue
+    { fill: '#1e2716', text: '#b5cea8', border: '#4e7a30' },   // green
+    { fill: '#261626', text: '#c586c0', border: '#8040a0' },   // purple
+    { fill: '#261e10', text: '#d7ba7d', border: '#a07030' },   // amber
+    { fill: '#261616', text: '#f48771', border: '#a03030' },   // red
+    { fill: '#162626', text: '#4ec9b0', border: '#207060' },   // teal
+];
+
+// State persisted across re-renders
+let lastErdData = null;
+let lastErdPos  = new Map();
+const collapsed = new Set();
+
+function nodeH(item, isCollapsed) {
+    if (isCollapsed) return HEADER_H;
+    return HEADER_H + (item.columns || []).length * COL_H + 2;
+}
+
+/**
+ * Pre-compute per-table column roles and group color from ERD data.
+ * Returns { pkCols, fkCols, groupColor } keyed by table name.
+ */
+function buildErdMeta(data) {
+    const meta = new Map();
+    for (const item of data.items) {
+        meta.set(item.name, { pkCols: new Set(), fkCols: new Set(), groupColor: null });
+    }
+
+    // PK columns: source_id in links identifies the PK of the source table
+    for (const { source, source_id } of data.links) {
+        meta.get(source)?.pkCols.add(source_id);
+    }
+    // FK columns: target_id in links identifies the FK column of the target table
+    for (const { target, target_id } of data.links) {
+        meta.get(target)?.fkCols.add(target_id);
+    }
+
+    // Group coloring — assign palette entry per group name
+    const groupEntries = Object.entries(data.groups || {});
+    groupEntries.forEach(([, tables], gi) => {
+        const color = GROUP_PALETTE[gi % GROUP_PALETTE.length];
+        for (const tbl of tables) {
+            if (meta.has(tbl)) meta.get(tbl).groupColor = color;
+        }
+    });
+
+    return meta;
 }
 
 /** Build X6 markup + attrs for one ER table node (pure SVG, no foreignObject). */
-function buildNodeDef(item) {
-    const isView = item.type === 'view';
-    const hFill  = isView ? '#1e3a2f' : '#1a2d3d';
-    const hColor = isView ? '#9cdcfe' : '#4fc1ff';
-    const h      = nodeH(item);
-    const cols   = item.columns || [];
+function buildNodeDef(item, { isCollapsed = false, pkCols = new Set(), fkCols = new Set(), groupColor = null } = {}) {
+    const isView  = item.type === 'view';
+    const gc      = groupColor || (isView
+        ? { fill: '#162620', text: '#9cdcfe', border: '#2a8a5a' }
+        : { fill: '#162636', text: '#4fc1ff', border: '#1e6aa8' });
 
-    // X6 v2 applies transform="translate(NODE_W/2, h/2)" to every <text> element
-    // in custom node markup, and wraps its content in a <tspan dy="0.3em">.
-    // To place a text baseline at node-space coords (ax, ay):
-    //   x_set = ax - NODE_W/2
-    //   y_set = ay - h/2 - 0.3 * fontSize
+    const h  = nodeH(item, isCollapsed);
+    const cols = isCollapsed ? [] : (item.columns || []);
+
+    // X6 v2 applies transform="translate(NODE_W/2, h/2)" to every <text> in markup,
+    // and wraps content in <tspan dy="0.3em">.
+    // Compensate: x_set = ax - cx,  y_set = ay - cy - 0.3*fontSize
     const cx = NODE_W / 2;
     const cy = h / 2;
-    const tx = (ax)       => ax - cx;
+    const tx = (ax)        => ax - cx;
     const ty = (ay, fs=12) => ay - cy - 0.3 * fs;
 
-    // Header path: only top-left/top-right corners rounded
-    const hp = `M ${RADIUS} 0 H ${NODE_W - RADIUS} Q ${NODE_W} 0 ${NODE_W} ${RADIUS}`
-             + ` V ${HEADER_H} H 0 V ${RADIUS} Q 0 0 ${RADIUS} 0 Z`;
+    // Header background path (top corners rounded; bottom straight when expanded)
+    const hpExpanded = `M ${RADIUS} 0 H ${NODE_W-RADIUS} Q ${NODE_W} 0 ${NODE_W} ${RADIUS}`
+                     + ` V ${HEADER_H} H 0 V ${RADIUS} Q 0 0 ${RADIUS} 0 Z`;
+    const hpCollapsed = `M ${RADIUS} 0 H ${NODE_W-RADIUS} Q ${NODE_W} 0 ${NODE_W} ${RADIUS}`
+                      + ` V ${h-RADIUS} Q ${NODE_W} ${h} ${NODE_W-RADIUS} ${h}`
+                      + ` H ${RADIUS} Q 0 ${h} 0 ${h-RADIUS} V ${RADIUS} Q 0 0 ${RADIUS} 0 Z`;
+    const hp = isCollapsed ? hpCollapsed : hpExpanded;
+
+    // Left accent bar (3 px coloured strip inside header left edge)
+    const accentPath = isCollapsed
+        ? `M ${RADIUS} 1 H ${RADIUS+3} V ${h-1} H ${RADIUS} Q 1 ${h} 1 ${h-RADIUS} V ${RADIUS} Q 1 1 ${RADIUS} 1 Z`
+        : `M ${RADIUS} 1 H ${RADIUS+3} V ${HEADER_H-1} H ${RADIUS} V ${RADIUS} Q 1 1 ${RADIUS} 1 Z`;
+
+    const toggleGlyph = isCollapsed ? '▶' : '▾';
 
     const markup = [
         { tagName: 'rect', selector: 'body'    },
         { tagName: 'path', selector: 'hdr'     },
+        { tagName: 'path', selector: 'accent'  },
         { tagName: 'text', selector: 'hdr-lbl' },
-        { tagName: 'line', selector: 'divider' },
+        { tagName: 'text', selector: 'hdr-tog' },
     ];
+    if (!isCollapsed && cols.length > 0) {
+        markup.push({ tagName: 'line', selector: 'divider' });
+    }
+
     const attrs = {
         body: {
             width: NODE_W, height: h,
-            fill: '#1e1e1e', stroke: '#3c3c3c', strokeWidth: 1,
+            fill: '#1a1a1a',
+            stroke: gc.border, strokeWidth: 1.5,
             rx: RADIUS, ry: RADIUS,
+            filter: 'url(#qs-shadow)',
         },
-        hdr: { d: hp, fill: hFill, stroke: 'none' },
+        hdr:    { d: hp, fill: gc.fill, stroke: 'none' },
+        accent: { d: accentPath, fill: gc.border, stroke: 'none' },
         'hdr-lbl': {
             text: item.name,
-            x: tx(10),
-            y: ty(HEADER_H / 2 + 4),   // baseline ~centered in 30px header
-            fill: hColor,
+            x: tx(RADIUS + 8),
+            y: ty(HEADER_H / 2 + 4),
+            fill: gc.text,
             'font-size': 12, 'font-weight': 'bold',
             'text-anchor': 'start',
         },
+        'hdr-tog': {
+            text: toggleGlyph,
+            x: tx(NODE_W - 10),
+            y: ty(HEADER_H / 2 + 4, 10),   // match font-size=10 for correct dy offset
+            fill: gc.text,
+            'font-size': 10, 'font-weight': 'normal',
+            'text-anchor': 'end',
+        },
         divider: {
             x1: 0, y1: HEADER_H, x2: NODE_W, y2: HEADER_H,
-            stroke: '#3c3c3c', strokeWidth: 1,
+            stroke: gc.border, strokeWidth: 1,
         },
     };
 
     cols.forEach((col, i) => {
-        const y0 = HEADER_H + i * COL_H;
-        const ym = y0 + COL_H / 2;   // vertical midpoint of row
+        const y0  = HEADER_H + i * COL_H;
+        const ym  = y0 + COL_H / 2;
+        const isPk = pkCols.has(col.name);
+        const isFk = fkCols.has(col.name);
+
+        // Row background
+        const rowFill = isPk ? '#1b2a12'
+                      : isFk ? '#0e1c2c'
+                      : (i % 2 === 0 ? '#202020' : '#252527');
+
+        // Role tag ("PK" / "FK") as a separate text selector
+        const hasTag = isPk || isFk;
+        const tagText = isPk ? 'PK' : 'FK';
+        const tagFill = isPk ? '#b8a030' : '#4080c0';
+
+        const nameX = hasTag ? tx(RADIUS + 8 + 26) : tx(RADIUS + 8);
+        const nameFill = isPk ? '#c5a400'
+                       : isFk ? '#9cdcfe'
+                       : '#d4d4d4';
+
         markup.push(
             { tagName: 'rect', selector: `rr${i}` },
             { tagName: 'text', selector: `cn${i}`  },
             { tagName: 'text', selector: `ct${i}`  },
         );
+        if (hasTag) markup.push({ tagName: 'text', selector: `tg${i}` });
+
         attrs[`rr${i}`] = {
             x: 0, y: y0, width: NODE_W, height: COL_H,
-            fill: i % 2 === 0 ? '#252526' : '#2a2a2d', stroke: 'none',
+            fill: rowFill, stroke: 'none',
         };
+        if (hasTag) {
+            attrs[`tg${i}`] = {
+                text: tagText,
+                x: tx(RADIUS + 8),
+                y: ty(ym, 9),
+                fill: tagFill,
+                'font-size': 9, 'font-weight': 'bold',
+                'text-anchor': 'start',
+            };
+        }
         attrs[`cn${i}`] = {
             text: col.name,
-            x: tx(8),
+            x: nameX,
             y: ty(ym, 11),
-            fill: '#d4d4d4',
-            'font-size': 11,
-            'text-anchor': 'start',
+            fill: nameFill,
+            'font-size': 11, 'text-anchor': 'start',
         };
         attrs[`ct${i}`] = {
             text: col.datatype || '',
-            x: tx(NODE_W - 8),
+            x: tx(NODE_W - 10),
             y: ty(ym, 10),
             fill: '#4ec9b0',
-            'font-size': 10,
-            'text-anchor': 'end',
+            'font-size': 10, 'text-anchor': 'end',
         };
     });
 
@@ -633,12 +735,20 @@ function computeLayout(data) {
     const pos = new Map();
     let y = 0;
     for (const [, names] of [...byLv.entries()].sort(([a], [b]) => a - b)) {
-        const maxH = Math.max(...names.map(n => nodeH(nameToItem.get(n) || { columns: [] })));
+        const maxH = Math.max(...names.map(n => nodeH(nameToItem.get(n) || { columns: [] }, false)));
         let x = 0;
         for (const name of names) { pos.set(name, { x, y }); x += NODE_W + GAP_X; }
         y += maxH + GAP_Y;
     }
     return pos;
+}
+
+/** Snapshot current node positions before a re-render that preserves layout. */
+function capturePositions() {
+    if (!x6graph) return;
+    for (const cell of x6graph.getCells()) {
+        if (cell.isNode()) lastErdPos.set(cell.id, cell.getPosition());
+    }
 }
 
 let x6graph = null;
@@ -653,69 +763,101 @@ function initGraph() {
         return;
     }
     const { Graph } = X6;
-    // Read actual pixel dimensions at init time — container must be visible
     const w = erdContainer.clientWidth  || 800;
     const h = erdContainer.clientHeight || 600;
     x6graph = new Graph({
         container: erdContainer,
-        width:  w,
-        height: h,
-        background: { color: '#1e1e1e' },
+        width: w, height: h,
+        background: { color: '#1a1a1a' },
         grid: false,
-        mousewheel: {
-            enabled: true,
-            zoomAtMousePosition: true,
-            factor: 1.1,
-            minScale: 0.15,
-            maxScale: 4,
-        },
+        mousewheel: { enabled: true, zoomAtMousePosition: true, factor: 1.1, minScale: 0.15, maxScale: 4 },
         panning:     { enabled: true },
         interacting: { nodeMovable: true },
         connecting:  { enabled: false },
     });
-}
 
-function renderERD(data) {
-    initGraph();
-    if (!x6graph) return;           // initGraph failed (X6 not loaded)
-    x6graph.clearCells();           // v2: clearCells(), not clear()
-
-    const pos = computeLayout(data);
-    for (const item of data.items) {
-        const { x, y } = pos.get(item.name) || { x: 0, y: 0 };
-        x6graph.addNode({ id: item.name, x, y, ...buildNodeDef(item) });
+    // Inject SVG drop-shadow filter once
+    const svgEl = erdContainer.querySelector('svg');
+    if (svgEl) {
+        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        defs.innerHTML =
+            '<filter id="qs-shadow" x="-30%" y="-30%" width="160%" height="160%">'
+            + '<feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="rgba(0,0,0,0.7)"/>'
+            + '</filter>';
+        svgEl.insertBefore(defs, svgEl.firstChild);
     }
 
-    const edgeAttrs = {
+    // Toggle collapse on node click (X6 fires node:click only on real clicks, not drags)
+    x6graph.on('node:click', ({ cell }) => {
+        capturePositions();
+        const id = cell.id;
+        if (collapsed.has(id)) collapsed.delete(id);
+        else collapsed.add(id);
+        if (lastErdData) renderErdCells(lastErdData, true);
+    });
+}
+
+/** Build edge attrs for a link. Mandatory FK = solid line, optional = dashed. */
+function edgeStyle(mandatory) {
+    const color = mandatory ? 'rgba(160,160,190,0.6)' : 'rgba(140,140,160,0.4)';
+    return {
         line: {
-            stroke: 'rgba(180,180,180,0.5)',
+            stroke: color,
             strokeWidth: 1.5,
-            sourceMarker: null,
+            strokeDasharray: mandatory ? '' : '6 4',
+            sourceMarker: {
+                tagName: 'path',
+                d: 'M 0 -4 L -8 0 L 0 4',   // single vertical bar (one side of crow's foot)
+                stroke: color, fill: 'none', strokeWidth: 1.5,
+            },
             targetMarker: {
                 tagName: 'path',
-                // crow's foot: open fork at target
-                d: 'M 0 -5 L -12 0 L 0 5 M -12 -5 L -12 5',
-                stroke: 'rgba(180,180,180,0.65)',
-                fill: 'none',
-                strokeWidth: 1.5,
+                // crow's foot: fork + inner bar
+                d: 'M 0 -6 L -12 0 L 0 6 M -7 -6 L -7 6',
+                stroke: color, fill: 'none', strokeWidth: 1.5,
             },
         },
     };
-    for (const { source, target } of data.links) {
+}
+
+/** Internal: populate the X6 graph with nodes + edges. */
+function renderErdCells(data, keepPositions) {
+    x6graph.clearCells();
+    const erdMeta = buildErdMeta(data);
+
+    for (const item of data.items) {
+        const pos  = lastErdPos.get(item.name) || { x: 0, y: 0 };
+        const meta = erdMeta.get(item.name) || {};
+        x6graph.addNode({
+            id: item.name, ...pos,
+            ...buildNodeDef(item, { isCollapsed: collapsed.has(item.name), ...meta }),
+        });
+    }
+
+    for (const link of data.links) {
         try {
             x6graph.addEdge({
-                source:    { cell: source },
-                target:    { cell: target },
-                attrs:     edgeAttrs,
+                source:    { cell: link.source },
+                target:    { cell: link.target },
+                attrs:     edgeStyle(link.mandatory !== false),
                 router:    { name: 'orth' },
-                connector: { name: 'rounded', args: { radius: 6 } },
+                connector: { name: 'rounded', args: { radius: 8 } },
             });
         } catch (_) { /* skip invalid refs */ }
     }
 
-    // v2: fitToContent centers around actual content
-    x6graph.zoomToFit({ padding: 40, maxScale: 1 });
-    x6graph.centerContent();
+    if (!keepPositions) {
+        x6graph.zoomToFit({ padding: 40, maxScale: 1 });
+        x6graph.centerContent();
+    }
+}
+
+function renderERD(data) {
+    initGraph();
+    if (!x6graph) return;
+    lastErdData = data;
+    lastErdPos  = computeLayout(data);
+    renderErdCells(data, false);
 }
 
 // ════════════════════════════════════════════════════════════════
