@@ -1,6 +1,6 @@
 /* globals __PACKAGE_VERSION__ */
 
-import tree, { OracleDDLGenerator } from './tree.js';
+import tree, { OracleDDLGenerator, DEFAULT_NAMING } from './tree.js';
 import lexer from './lexer.js';
 import json2qsql from './json2qsql.js'
 import errorMsgs from './errorMsgs.js'
