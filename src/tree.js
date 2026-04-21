@@ -94,6 +94,69 @@ let tree = (function(){
     }
 
     /**
+     * Resolve varchar2 length from the 'vc' keyword (e.g. vc100, vc1k, vc(200)).
+     * Returns the numeric length value (default unchanged if no vc keyword).
+     * @param {Array}  src        — token array
+     * @param {number} vcPos      — position of the vc-prefix token (-1 or 0 means absent)
+     * @param {number} defaultLen — starting length before vc adjustment
+     */
+    function _resolveVarcharLen(src, vcPos, defaultLen) {
+        let len = defaultLen;
+        let varcharLen = src[vcPos].value.substring('vc'.length);
+        if( '' == varcharLen ) {
+            const oParenPos = src.indexOf ? -1 : -1; // resolved by caller
+            // vc( N ) — the length is in the token two positions ahead (caller already checked)
+            // this case is handled by the caller with indexOf('(')
+        }
+        if( '' != varcharLen )
+            len = parseInt(varcharLen);
+        if( src[vcPos].value.endsWith('k') )
+            len = len < 32 ? len * 1024 : len * 1024 - 1;
+        return len;
+    }
+
+    /**
+     * Returns true when column naming conventions imply a numeric type.
+     * Rules (all require no explicit vc or date keyword):
+     *   - name ends with _id  (and no vc, no date keyword)
+     *   - second token is 'id'
+     *   - name is 'quantity'
+     *   - name ends with '_number'
+     *   - name ends with 'id' AND pk follows the slash
+     * @param {string} colName
+     * @param {Array}  src
+     * @param {number} vcPos
+     * @param {number} datePos
+     * @param {number} slashPos
+     * @param {number} pkPos
+     */
+    function _nameImpliesNumeric(colName, src, vcPos, datePos, slashPos, pkPos) {
+        if( colName.endsWith('_id') && vcPos < 0 && datePos < 0 ) return true;
+        if( src[1] && src[1].value == 'id' ) return true;
+        if( colName == 'quantity' ) return true;
+        if( colName.endsWith('_number') ) return true;
+        if( colName.endsWith('id') && vcPos < 0 && slashPos + 1 == pkPos ) return true;
+        return false;
+    }
+
+    /**
+     * Returns true when column name or keyword context implies a date/timestamp type.
+     * @param {string} colName
+     * @param {Array}  src
+     * @param {number} datePos  — position of a literal 'date' token in src (-1 if absent)
+     */
+    function _nameImpliesDate(colName, src, datePos) {
+        if( 0 <= datePos ) return true;
+        if( colName == 'hiredate' ) return true;
+        if( colName.endsWith('_date') ) return true;
+        if( colName.startsWith('date_of_') ) return true;
+        if( colName.startsWith('created') ) return true;
+        if( colName.startsWith('updated') ) return true;
+        if( 1 < src.length && src[1].value == 'd' ) return true;
+        return false;
+    }
+
+    /**
      * Node in QSQL tree defining a Table, a Column, a View, or an Option
      * @param lineNo  -- line number
      * @param {*} inputLine -- QSQL line
@@ -387,7 +450,10 @@ let tree = (function(){
             if( 0 < tmp )
                 nameTo = tmp;
         
-            
+            tmp = this.indexOf('=');
+            if( 0 < tmp )
+                nameTo = tmp;
+
             for( let i = 0; i < datatypes.length; i++ ) {
                 let pos = this.indexOf(datatypes[i]);
                 if( pos < 0 )
@@ -426,118 +492,90 @@ let tree = (function(){
 
         this._inferTypeFull = function() {
             const src = this.src;
-            var char = ddl.semantics();
-            var len = 4000;
-            if( src[0].value.endsWith('_name') || src[0].value.startsWith('name') || src[0].value.startsWith('email') )
-                len = ddl.getOptionValue('namelen');
-            const vcPos = this.indexOf('vc', true);  
+            const colName = src[0].value;
+
+            // ── Phase 1: varchar2 base length ─────────────────────────────────────
+            var len = (colName.endsWith('_name') || colName.startsWith('name') || colName.startsWith('email'))
+                ? ddl.getOptionValue('namelen')
+                : 4000;
+            const vcPos = this.indexOf('vc', true);
             if( 0 < vcPos ) {
+                // vc(N) form: length is in the token two positions ahead
                 let varcharLen = src[vcPos].value.substring('vc'.length);
                 if( '' == varcharLen ) {
-                    let oParenPos = this.indexOf('(');
-                    if( oParenPos == vcPos + 1 ) {
-                        varcharLen = src[vcPos+2].value;
-                    }
+                    const oParenPos = this.indexOf('(');
+                    if( oParenPos == vcPos + 1 ) varcharLen = src[vcPos+2].value;
                 }
-                if( '' != varcharLen )
-                    len = parseInt(varcharLen);
-                if( src[vcPos].value.endsWith('k') )
-                    if( len < 32 )
-                        len = len * 1024;
-                    else
-                        len =  len * 1024 -1 ;   
+                len = _resolveVarcharLen(src, vcPos, varcharLen != '' ? parseInt(varcharLen) : len);
             }
-            var ret = 'varchar2('+len+char+')';
-            const datePos = this.indexOf('date');
+            var ret = 'varchar2('+len+ddl.semantics()+')';
+
+            // ── Phase 2: numeric by column name convention ────────────────────────
+            const datePos  = this.indexOf('date');
             if( this._slashPos === undefined ) this._slashPos = this.indexOf('/');
             const slashPos = this._slashPos;
-            if( src[0].value.endsWith('_id') && vcPos < 0 && datePos < 0 )
+            if( _nameImpliesNumeric(colName, src, vcPos, datePos, slashPos, this.indexOf('pk')) )
                 ret = 'number';
-            if( src[1] && src[1].value == 'id' )
-                ret = 'number';
-            if( src[0].value == 'quantity' )
-                ret = 'number';
-            if( src[0].value.endsWith('_number') )
-                ret = 'number';
-            if( src[0].value.endsWith('id') && vcPos < 0 && slashPos+1 == this.indexOf('pk') )
-                ret = 'number';
-            if( this.occursBeforeOption('int', true) )
-                ret = 'integer';
-            if( 0 < vcPos )
-                ret = 'varchar2('+len+char+')';
-            const vector = this.vectorType('vector'); 
-            if( vector != null ) 
-                ret = vector;
-            else {
-                const vect = this.vectorType('vect'); 
-                if( vect != null ) 
-                    ret = vect;
-            }
+
+            // ── Phase 3: explicit keyword overrides ───────────────────────────────
+            if( this.occursBeforeOption('int', true) ) ret = 'integer';
+            if( 0 < vcPos ) ret = 'varchar2('+len+ddl.semantics()+')';
+            const vector = this.vectorType('vector') || this.vectorType('vect');
+            if( vector != null ) ret = vector;
+
+            // ── Phase 4: boolean (name convention + keyword, with native upgrade) ─
             const parent_child = concatNames(parent.parseName(),'_',this.parseName());
             let booleanCheck = '';
-            if( src[0].value.endsWith('_yn') || src[0].value.startsWith('is_') ) {
-                ret = 'varchar2(1'+ddl.semantics()+ ')';
-                booleanCheck = '\n' + tab +  tab+' '.repeat(parent.maxChildNameLen()) +'constraint '+concatNames(ddl.objPrefix(),parent_child)+' check ('+this.parseName()+" in ('Y','N'))";
+            const isBooleanName = colName.endsWith('_yn') || colName.startsWith('is_');
+            const hasBoolKeyword = boolTypes.some(bt => 0 < this.indexOf(bt));
+            if( isBooleanName || hasBoolKeyword ) {
+                ret = 'varchar2(1'+ddl.semantics()+')';
+                booleanCheck = '\n' + tab + tab+' '.repeat(parent.maxChildNameLen())
+                    + 'constraint '+concatNames(ddl.objPrefix(),parent_child)
+                    + ' check ('+this.parseName()+" in ('Y','N'))";
             }
-            for( let i in boolTypes ) {
-                let pos = this.indexOf(boolTypes[i]);
-                if( 0 < pos ) {
-                    ret = 'varchar2(1'+ddl.semantics()+ ')';
-                    booleanCheck = '\n' + tab +  tab+' '.repeat(parent.maxChildNameLen()) +'constraint '+concatNames(ddl.objPrefix(),parent_child)+' check ('+this.parseName()+" in ('Y','N'))";
-                    break;
-                }
-            } 
             const dbVer = ddl.getOptionValue('db');
-            if( booleanCheck != '' && ( ddl.getOptionValue('boolean')=='native'
-                                      || ddl.getOptionValue('boolean') != 'yn' && 0 < dbVer.length && 23 <= getMajorVersion(dbVer) )
-            ) {
+            if( booleanCheck != '' && (
+                    ddl.getOptionValue('boolean') == 'native'
+                 || ddl.getOptionValue('boolean') != 'yn' && 0 < dbVer.length && 23 <= getMajorVersion(dbVer)
+            ) ) {
                 booleanCheck = '';
                 ret = 'boolean';
             }
-            let isNativeBoolean = (ret === 'boolean');
-            if( this.indexOf('phone_number') == 0 )
+            const isNativeBoolean = (ret === 'boolean');
+
+            // ── Phase 5: phone_number special-case + num(precision) ───────────────
+            if( this.indexOf('phone_number') == 0 ) ret = 'number';
+            const numFrom = this.indexOf('num', true);
+            if( 0 < numFrom ) {
                 ret = 'number';
-            let from = this.indexOf('num', true);
-            if( 0 < from )
-                ret = 'number';
-            let to = this.indexOf(')');  
-            if( 0 < from && 0 < to )
-                ret += this.content.substring(src[from+1].begin, src[to].end).toLowerCase();
-            if( 0 <= datePos || 0 == this.indexOf('hiredate') || src[0].value.endsWith('_date') || src[0].value.startsWith('date_of_')
-             || 1 < src.length && src[1].value == 'd'
-             || src[0].value.startsWith('created')
-             || src[0].value.startsWith('updated')
-            )        		
+                const numTo = this.indexOf(')');
+                if( 0 < numTo ) ret += this.content.substring(src[numFrom+1].begin, src[numTo].end).toLowerCase();
+            }
+
+            // ── Phase 6: date / timestamp override ───────────────────────────────
+            if( _nameImpliesDate(colName, src, datePos) )
                 ret = ddl.getOptionValue('Date Data Type').toLowerCase();
-            if( vcPos < 0 ) {              	
-                if( this.occursBeforeOption('clob')   ) 
-                    ret = 'clob';
-                if( this.occursBeforeOption('blob') || this.occursBeforeOption('file') ) 
-                    ret = 'blob';
+
+            // ── Phase 7: LOB / JSON (only when no vc keyword) ────────────────────
+            if( vcPos < 0 ) {
+                if( this.occursBeforeOption('clob') ) ret = 'clob';
+                if( this.occursBeforeOption('blob') || this.occursBeforeOption('file') ) ret = 'blob';
                 if( this.occursBeforeOption('json') ) {
-                    if( dbVer != null && 0 < dbVer.length && 23 <= getMajorVersion(dbVer) )
-                        ret = 'json';
-                    else
-                        ret = 'clob check ('+this.parseName()+' is json)';
+                    ret = (dbVer != null && 0 < dbVer.length && 23 <= getMajorVersion(dbVer))
+                        ? 'json'
+                        : 'clob check ('+this.parseName()+' is json)';
                 }
             }
-            for( let i in geoTypes ) {
-                if( this.occursBeforeOption(geoTypes[i]) ) {
-                    ret = 'sdo_geometry';
-                    break;
-                }
-            }
-            if( this.isOption('domain') ) {
-                if( dbVer != null && 0 < dbVer.length && 23 <= getMajorVersion(dbVer) ) {
-                    ret = this.getOptionValue('domain');
-                }
-            }
-            if( this.occursBeforeOption('tswltz') && slashPos !== 0  )
-                ret = TSWLTZ_LOWER;
-            else if( this.occursBeforeOption('tswtz') || this.occursBeforeOption('tstz') )
-                ret = TSWTZ_LOWER;
-            else if( this.occursBeforeOption('ts') )
-                ret = TIMESTAMP_LOWER;
+
+            // ── Phase 8: geometry, domain (23+), timestamp variants ───────────────
+            for( let i in geoTypes ) if( this.occursBeforeOption(geoTypes[i]) ) { ret = 'sdo_geometry'; break; }
+            if( this.isOption('domain') && dbVer != null && 0 < dbVer.length && 23 <= getMajorVersion(dbVer) )
+                ret = this.getOptionValue('domain');
+            if( this.occursBeforeOption('tswltz') && slashPos !== 0 ) ret = TSWLTZ_LOWER;
+            else if( this.occursBeforeOption('tswtz') || this.occursBeforeOption('tstz') ) ret = TSWTZ_LOWER;
+            else if( this.occursBeforeOption('ts') ) ret = TIMESTAMP_LOWER;
+
             return { type: ret, booleanCheck, isNativeBoolean, parent_child };
         };
 
