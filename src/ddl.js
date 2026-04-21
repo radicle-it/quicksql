@@ -1,6 +1,6 @@
 /* globals __PACKAGE_VERSION__ */
 
-import tree from './tree.js';
+import tree, { OracleDDLGenerator } from './tree.js';
 import lexer from './lexer.js';
 import json2qsql from './json2qsql.js'
 import errorMsgs from './errorMsgs.js'
@@ -263,12 +263,13 @@ export const quicksql = (function () {
             if( this.erd != null )
                 return this.erd;
 
+            const gen = new OracleDDLGenerator(this);
             let descendants = this.descendants();
  
             let output = {items:[]};
 
             for( let i = 0; i < descendants.length; i++ ) {
-                if( descendants[i].parseType() != 'table' ) 
+                if( descendants[i].inferType() != 'table' ) 
                     continue;
 
                 let item = {name: this.objPrefix('no schema')  +descendants[i].parseName('')};
@@ -335,7 +336,7 @@ export const quicksql = (function () {
                 let explicitPk = descendants[i].getExplicitPkName();
                 for( let j = 0; j < descendants[i].children.length; j++ ) {
                     let child = descendants[i].children[j];
-                    if( child.parseType() == 'table' )
+                    if( child.inferType() == 'table' )
                         continue;
                     if( child.refId() != null )
                         continue;
@@ -384,10 +385,10 @@ export const quicksql = (function () {
             output.links = [];
 
             for( let i = 0; i < descendants.length; i++ ) {
-                if( descendants[i].parseType() != 'table' ) 
+                if( descendants[i].inferType() != 'table' ) 
                     continue;
 
-                descendants[i].toDDL();    // to setup fks
+                gen.generateDDL(descendants[i]);    // to setup fks
 
                 for( let fk in descendants[i].fks ) {
                     let parent = descendants[i].fks[fk];
@@ -412,7 +413,7 @@ export const quicksql = (function () {
 
             output.groups = {};
             for( let i = 0; i < descendants.length; i++ ) {
-                if( descendants[i].parseType() != 'table' ) continue;
+                if( descendants[i].inferType() != 'table' ) continue;
                 let groupName = descendants[i].getAnnotationValue('TGROUP');
                 if( groupName != null ) {
                     if( !output.groups[groupName] ) output.groups[groupName] = [];
@@ -430,13 +431,15 @@ export const quicksql = (function () {
             if( this.ddl != null )
                 return this.ddl;
 
+            const gen = new OracleDDLGenerator(this);
+
             var output = '';
 
             var descendants = this.descendants();
 
             if( this.optionEQvalue('Include Drops','yes') )
                 for( let i = 0; i < descendants.length; i++ ) {
-                    let drop = descendants[i].generateDrop();
+                    let drop = gen.generateDrop(descendants[i]);
                     if( drop != '' )
                         output += drop;
                 }
@@ -454,7 +457,7 @@ export const quicksql = (function () {
             output += '-- create tables\n\n';
 
             for( let i = 0; i < this.forest.length; i++ ) {
-                output += this.forest[i].toDDL()+'\n';
+                output += gen.generateDDL(this.forest[i])+'\n';
             }
 
             for ( let i = 0; i < this.postponedAlters.length; i++ ) {
@@ -483,7 +486,7 @@ export const quicksql = (function () {
                 output += 'create index ' + this.objPrefix() + 'language_i1 on ' + this.objPrefix() + 'language (locale);\n\n';
 
                 for( let i = 0; i < descendants.length; i++ ) {
-                    let transTable = descendants[i].generateTransTable();
+                    let transTable = gen.generateTransTable(descendants[i]);
                     if( transTable != '' )
                         output += transTable;
                 }
@@ -491,7 +494,7 @@ export const quicksql = (function () {
 
             let j = 0;
             for( let i = 0; i < descendants.length; i++ ) {
-                let trigger = descendants[i].generateTrigger();
+                let trigger = gen.generateTrigger(descendants[i]);
                 if( trigger != '' ) {
                     if( j++ == 0 )
                         output += '-- triggers\n';
@@ -499,7 +502,7 @@ export const quicksql = (function () {
                 }
             }
             for( let i = 0; i < descendants.length; i++ ) {
-                let trigger = descendants[i].generateImmutableTrigger();
+                let trigger = gen.generateImmutableTrigger(descendants[i]);
                 if( trigger != '' ) {
                     if( j++ == 0 )
                         output += '-- immutable triggers\n';
@@ -509,7 +512,7 @@ export const quicksql = (function () {
             j = 0;
 
             for( let i = 0; i < descendants.length; i++ ) {
-                let ords = descendants[i].restEnable();
+                let ords = gen.restEnable(descendants[i]);
                 if( ords != '' )
                     output += ords +'\n';
             }
@@ -520,7 +523,7 @@ export const quicksql = (function () {
                 if( this.optionEQvalue('api',false) 
                  && descendants[i].trimmedContent().toLowerCase().indexOf('/api') < 0 )
                     continue;
-                let tapi = descendants[i].generateTAPI();
+                let tapi = gen.generateTAPI(descendants[i]);
                 if( tapi != '' ) {
                     if( j++ == 0)
                         output += '-- APIs\n';
@@ -530,7 +533,7 @@ export const quicksql = (function () {
 
             j = 0;
             for( let i = 0; i < this.forest.length; i++ ) {
-                let view = this.forest[i].generateView();
+                let view = gen.generateView(this.forest[i]);
                 if( view != '' ) {
                     if( j++ == 0)
                         output += '-- create views\n';
@@ -539,7 +542,7 @@ export const quicksql = (function () {
             }
 
             for( let i = 0; i < descendants.length; i++ ) {
-                let resolvedView = descendants[i].generateResolvedView();
+                let resolvedView = gen.generateResolvedView(descendants[i]);
                 if( resolvedView != '' ) {
                     if( j++ == 0)
                         output += '-- create views\n';
@@ -550,7 +553,7 @@ export const quicksql = (function () {
             // table groups from TGROUP annotations
             let groups = {};
             for( let i = 0; i < descendants.length; i++ ) {
-                if( descendants[i].parseType() != 'table' ) continue;
+                if( descendants[i].inferType() != 'table' ) continue;
                 let groupName = descendants[i].getAnnotationValue('TGROUP');
                 if( groupName != null ) {
                     if( !groups[groupName] ) groups[groupName] = [];
@@ -580,7 +583,7 @@ export const quicksql = (function () {
 
                 for( let i = 0; i < this.forest.length; i++ ) {
                     let node = this.forest[i];
-                    let type = node.parseType();
+                    let type = node.inferType();
                     let pairs = node.getAnnotationPairs();
                     let objName = (prefix + node.parseName()).toUpperCase();
 
@@ -633,7 +636,7 @@ export const quicksql = (function () {
 
             j = 0;
             for( let i = 0; i < this.forest.length; i++ ) {
-                let data = this.forest[i].generateData(this.data);
+                let data = gen.generateData(this.forest[i], this.data);
                 if( data != '' ) {
                     if( j++ == 0)
                         output += '-- load data\n\n';
