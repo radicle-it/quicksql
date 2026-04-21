@@ -37,6 +37,20 @@ let tree = (function(){
     datatypes = datatypes.concat(vectTypes);
     datatypes = datatypes.concat(geoTypes);
 
+    /**
+     * Map from type keyword to the extra columns it spawns.
+     * Each entry: { suffix, type(ctx) } where ctx is the ddl object.
+     * Adding a new multi-column type only requires an entry here.
+     */
+    const EXPANDING_TYPES = {
+        file: [
+            { suffix: '_filename', type: ctx => 'varchar2(255'+ctx.semantics()+')' },
+            { suffix: '_mimetype', type: ctx => 'varchar2(255'+ctx.semantics()+')' },
+            { suffix: '_charset',  type: ctx => 'varchar2(255'+ctx.semantics()+')' },
+            { suffix: '_lastupd',  type: ctx => ctx.getOptionValue('Date Data Type').toLowerCase() },
+        ]
+    };
+
     /** Remove a trailing ',\n' from a DDL string. */
     function trimTrailingComma(s) {
         if (s.lastIndexOf(',\n') === s.length - 2)
@@ -124,8 +138,15 @@ let tree = (function(){
                 if( 0 < child.children.length )
                     continue;
                 let len = child.parseName().length;
-                if( 0 < child.indexOf('file') )
-                    len += '_FILENAME'.length;
+                for( const type in EXPANDING_TYPES ) {
+                    if( 0 < child.indexOf(type) ) {
+                        let maxSuffix = 0;
+                        for( const ext of EXPANDING_TYPES[type] )
+                            if( ext.suffix.length > maxSuffix ) maxSuffix = ext.suffix.length;
+                        len += maxSuffix;
+                        break;
+                    }
+                }
                 if( maxLen < len )
                     maxLen = len;
             }
@@ -1053,20 +1074,16 @@ let tree = (function(){
                     if( child.parseName() == this.getExplicitPkName() )
                         continue;
                     ret += tab + child.singleDDL() +',\n';
-                    if( 0 < child.indexOf('file') ) {
-                        const col = child.parseName().toUpperCase();
-                        let extraCol  = col+'_FILENAME';
-                        let pad = tab+' '.repeat(this.maxChildNameLen() - extraCol.length);
-                        ret += tab +  extraCol.toLowerCase() + pad + 'varchar2(255'+ddl.semantics()+ '),\n';
-                        extraCol  = col+'_MIMETYPE';
-                        pad = tab+' '.repeat(this.maxChildNameLen() - extraCol.length);
-                        ret += tab +  extraCol.toLowerCase() + pad + 'varchar2(255'+ddl.semantics()+ '),\n';
-                        extraCol  = col+'_CHARSET';
-                        pad = tab+' '.repeat(this.maxChildNameLen() - extraCol.length);
-                        ret += tab +  extraCol.toLowerCase() + pad + 'varchar2(255'+ddl.semantics()+ '),\n';
-                        extraCol  = col+'_LASTUPD';
-                        pad = tab+' '.repeat(this.maxChildNameLen() - extraCol.length);
-                        ret += tab +  extraCol.toLowerCase() + pad + ddl.getOptionValue('Date Data Type').toLowerCase() + ',\n';
+                    for( const type in EXPANDING_TYPES ) {
+                        if( 0 < child.indexOf(type) ) {
+                            const col = child.parseName().toUpperCase();
+                            for( const ext of EXPANDING_TYPES[type] ) {
+                                const extraCol = col + ext.suffix.toUpperCase();
+                                const pad = tab+' '.repeat(this.maxChildNameLen() - extraCol.length);
+                                ret += tab + extraCol.toLowerCase() + pad + ext.type(ddl) + ',\n';
+                            }
+                            break;
+                        }
                     }
                 }
             }
