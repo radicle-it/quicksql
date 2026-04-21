@@ -468,7 +468,6 @@ let tree = (function(){
 
             const parent_child = concatNames(parent.parseName(),'_',this.parseName());
 
-            const isDefault = this.isOption('default');
 
             let booleanCheck = '';
             if( src[0].value.endsWith('_yn') || src[0].value.startsWith('is_') ) {
@@ -554,7 +553,11 @@ let tree = (function(){
                 return ret;
             }	
 
+            return this._buildColumnConstraints(ret, booleanCheck, isNativeBoolean, parent_child);
+        };
 
+        this._buildColumnConstraints = function(ret, booleanCheck, isNativeBoolean, parent_child) {
+            const src = this.src;
             if( this.isOption('unique') || this.isOption('uk') ) {
                 ret += '\n';  
                 ret += tab +  tab+' '.repeat(parent.maxChildNameLen()) +'constraint '+concatNames(ddl.objPrefix(),parent_child,'_unq')+' unique';
@@ -595,7 +598,7 @@ let tree = (function(){
                 const bi = this.indexOf('between');
                 const values = src[bi+1].getValue() + ' and ' + src[bi+3].getValue();
                 ret +=' constraint '+concatNames(parent_child,'_bet')+'\n';
-                ret +='           check ('+this.parseName()+' between '+values+')';        		
+                ret +='           check ('+this.parseName()+' between '+values+')';
             }
             if( this.isOption('pk') ) {
                 let typeModifier = ret.startsWith('number')
@@ -955,13 +958,13 @@ let tree = (function(){
             } //...else   -- too lae to do here, performed earlier, during recognize()
         }
 
-        this._genSequence = function(objName) {
+        this._genSequence = function(ddl, objName) {
             if( ddl.optionEQvalue('pk', 'SEQ') && ddl.optionEQvalue('genpk', true) )
                 return 'create sequence  '+objName+'_seq;\n\n';
             return '';
         };
 
-        this._genTableHeader = function(objName, immutableKeyword, idColName) {
+        this._genTableHeader = function(ddl, objName, immutableKeyword, idColName) {
             let ret = 'create '+immutableKeyword+'table '+objName+' (\n';
             var pad = tab+' '.repeat(this.maxChildNameLen() - 'ID'.length);
             if( idColName != null && !this.isOption('pk') ) {
@@ -982,7 +985,7 @@ let tree = (function(){
             return ret;
         };
 
-        this._genFkColumns = function(objName) {
+        this._genFkColumns = function(ddl, objName) {
             let ret = '';
             for( let fk in this.fks ) {
                 let parent = this.fks[fk];
@@ -1053,7 +1056,7 @@ let tree = (function(){
             return ret;
         };
 
-        this._genRowKeyColumn = function(objName) {
+        this._genRowKeyColumn = function(ddl, objName) {
             if( !this.hasRowKey() ) return '';
             let pad = tab+' '.repeat(this.maxChildNameLen() - 'ROW_KEY'.length);
             let ret = tab +  'row_key' + pad + 'varchar2(30'+ddl.semantics()+ ')\n';
@@ -1061,7 +1064,7 @@ let tree = (function(){
             return ret;
         };
 
-        this._genRegularColumns = function(objName, idColName) {
+        this._genRegularColumns = function(ddl, objName, idColName) {
             let ret = '';
             for( let i = 0; i < this.children.length; i++ ) {
                 let child = this.children[i];
@@ -1096,7 +1099,7 @@ let tree = (function(){
             return tab +  'row_version' + pad + 'integer not null,\n';
         };
 
-        this._genAuditColumns = function() {
+        this._genAuditColumns = function(ddl) {
             if( !this.hasAuditCols() ) return '';
             let auditDateType = ddl.getOptionValue('auditdate');
             if( auditDateType == null || auditDateType == '' )
@@ -1118,7 +1121,7 @@ let tree = (function(){
             return ret;
         };
 
-        this._genAdditionalColumns = function() {
+        this._genAdditionalColumns = function(ddl) {
             let ret = '';
             var cols = ddl.additionalColumns();
             for( let col in cols ) {
@@ -1129,7 +1132,7 @@ let tree = (function(){
             return ret;
         };
 
-        this._genTableFooter = function(objName, immutableKeyword, _db23plus) {
+        this._genTableFooter = function(ddl, objName, immutableKeyword, _db23plus) {
             let tableAnnotations = this.annotations != null ? '\nannotations (' + this.annotations + ')' : '';
             let compressClause = '';
             if( ddl.optionEQvalue('compress','yes') || this.isOption('compress') )
@@ -1268,17 +1271,17 @@ let tree = (function(){
                 immutableKeyword = 'immutable ';
             const idColName = this.getGenIdColName();
 
-            let ret = this._genSequence(objName);
-            ret += this._genTableHeader(objName, immutableKeyword, idColName);
-            ret += this._genFkColumns(objName);
-            ret += this._genRowKeyColumn(objName);
-            ret += this._genRegularColumns(objName, idColName);
+            let ret = this._genSequence(ddl, objName);
+            ret += this._genTableHeader(ddl, objName, immutableKeyword, idColName);
+            ret += this._genFkColumns(ddl, objName);
+            ret += this._genRowKeyColumn(ddl, objName);
+            ret += this._genRegularColumns(ddl, objName, idColName);
             ret += this._genRowVersionColumn();
-            ret += this._genAuditColumns();
-            ret += this._genAdditionalColumns();
+            ret += this._genAuditColumns(ddl);
+            ret += this._genAdditionalColumns(ddl);
             ret += this.genConstraint();
             ret = trimTrailingComma(ret);
-            ret += this._genTableFooter(objName, immutableKeyword, _db23plus);
+            ret += this._genTableFooter(ddl, objName, immutableKeyword, _db23plus);
             ret += this._genMultiColFkAlters(objName);
             ret += this._genIndexes(objName, _db23plus);
             ret += this._genComments(objName);
