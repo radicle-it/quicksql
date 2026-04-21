@@ -17,7 +17,7 @@ if ( ![ 'DDL', 'ERD' ].includes( gTargetLibrary ) ) {
 const gBuildOptions = gTargetLibrary === 'DDL' ?
     {
         lib: {
-            entry: path.join( __dirname, 'src/ddl.js' ),
+            entry: path.join( __dirname, 'src/ddl.ts' ),
             name: buildConstants.__DDL_LIBRARY_NAME__,
             fileName: buildConstants.__DDL_LIBRARY_FILE_NAME__
         }
