@@ -2367,7 +2367,7 @@ let tree = (function(){
             if( chunks.length < 3 )
                 return '/* duality view requires at least a view name and one table */\n';
 
-            const viewName = this._ddl.objPrefix() + chunks[1].value;
+            const viewName = this._ddl.objPrefix() + chunks[0].value;
             const rootTableName = chunks[2].value;
             const rootNode = this._ddl.find(rootTableName);
             if( rootNode == null )
