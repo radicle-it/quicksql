@@ -100,18 +100,9 @@ let tree = (function(){
      * @param {number} vcPos      — position of the vc-prefix token (-1 or 0 means absent)
      * @param {number} defaultLen — starting length before vc adjustment
      */
-    function _resolveVarcharLen(src, vcPos, defaultLen) {
-        let len = defaultLen;
-        let varcharLen = src[vcPos].value.substring('vc'.length);
-        if( '' == varcharLen ) {
-            const oParenPos = src.indexOf ? -1 : -1; // resolved by caller
-            // vc( N ) — the length is in the token two positions ahead (caller already checked)
-            // this case is handled by the caller with indexOf('(')
-        }
-        if( '' != varcharLen )
-            len = parseInt(varcharLen);
+    function _resolveVarcharLen(src, vcPos, len) {
         if( src[vcPos].value.endsWith('k') )
-            len = len < 32 ? len * 1024 : len * 1024 - 1;
+            return len < 32 ? len * 1024 : len * 1024 - 1;
         return len;
     }
 
@@ -476,20 +467,6 @@ let tree = (function(){
 
             return this.sugarcoatName(nameFrom, nameTo);
         };
-        this.parseType = function() {
-            if( this.children != null && 0 < this.children.length )
-                return 'table';
-            const src = this.src;
-            if( src[0].value == 'view' || 1 < src.length && src[1].value == '=' ) 
-                return 'view';
-            if( src[0].value == 'dv' )
-                return 'dv';
-            if( this.parent == null )
-                return 'table';
-            const { type, booleanCheck, isNativeBoolean, parent_child } = this._inferTypeFull();
-            return this._buildColumnConstraints(type, booleanCheck, isNativeBoolean, parent_child);
-        };
-
         this._inferTypeFull = function() {
             const src = this.src;
             const colName = src[0].value;
@@ -609,66 +586,6 @@ let tree = (function(){
             return t;
         };
 
-        this._buildColumnConstraints = function(ret, booleanCheck, isNativeBoolean, parent_child) {
-            const src = this.src;
-            if( this.isOption('unique') || this.isOption('uk') ) {
-                ret += '\n';  
-                ret += tab +  tab+' '.repeat(parent.maxChildNameLen()) +'constraint '+concatNames(ddl.objPrefix(),parent_child,'_unq')+' unique';
-            } 
-            var optQuote = '\'';
-            if(  ret.startsWith('integer') || ret.startsWith('number') || ret.startsWith('date')  ) 
-                optQuote = '';
-            if( this.isOption('default') ) {
-                let value = '';
-                for( let i = this.indexOf('default')+1; i < src.length; i++ ) {
-                    const token = src[i].getValue();
-                    if( token == '/' )
-                        break;
-                    if( token == '-' )
-                        break;
-                    if( token == '[' )
-                        break;
-                    value += src[i].getValue();
-                }
-                const sqlDateExpressions = ['sysdate', 'current_date', 'current_timestamp', 'systimestamp', 'localtimestamp'];
-                if( isNativeBoolean ) {
-                    let boolVal = (value.toUpperCase() === 'Y' || value.toLowerCase() === 'true') ? 'true' : 'false';
-                    ret += ' default on null ' + boolVal;
-                } else if( sqlDateExpressions.includes(value.toLowerCase()) )
-                    ret += ' default on null ' + value;
-                else
-                    ret += ' default on null ' + optQuote + value + optQuote;
-            }
-            if( this.isOption('nn') || this.indexOf('not')+1== this.indexOf('null') )
-                if( this.indexOf('pk') < 0 ) 
-                    ret += ' not null';
-            if( this.isOption('hidden') || this.isOption('invincible') ) 
-                ret += ' invisible';
-            if( !isNativeBoolean )
-                ret += this.genConstraint(optQuote);
-            ret += booleanCheck;
-            if( this.isOption('between') ) {
-                const bi = this.indexOf('between');
-                const values = src[bi+1].getValue() + ' and ' + src[bi+3].getValue();
-                ret +=' constraint '+concatNames(parent_child,'_bet')+'\n';
-                ret +='           check ('+this.parseName()+' between '+values+')';
-            }
-            if( this.isOption('pk') ) {
-                let typeModifier = ret.startsWith('number')
-                    ? ' ' + pkTypeModifier(ddl.objPrefix() + this.parent.parseName())
-                    : ' not null';
-                ret += typeModifier + '\n';
-                ret += tab + tab + ' '.repeat(parent.maxChildNameLen()) + 'constraint ' + concatNames(ddl.objPrefix(),parent_child,'_pk')+' primary key';
-            }
-            if( this.annotations != null ) {
-                if( 0 <= ret.indexOf('\n') )
-                    ret += '\n' + tab + tab + ' '.repeat(parent.maxChildNameLen()) + 'annotations (' + this.annotations + ')';
-                else
-                    ret += ' annotations (' + this.annotations + ')';
-            }
-            return ret;
-        };
-
         this.vectorType = function( mnemonics ) {
             const vectPos = this.indexOf(mnemonics, true);  
             const src = this.src; 
@@ -709,16 +626,16 @@ let tree = (function(){
                 let constr = this.getGeneralConstraint();
                 if( constr != null ) {
                     if( this.children != null && 0 < this.children.length ) {  // (general) table level constraint
-                        ret += tab + 'constraint '+concatNames(ddl.objPrefix(),parent_child,'_ck');
+                        ret += tab + 'constraint '+concatNames(ddl.objPrefix(),parent_child,DEFAULT_NAMING.ck);
                         ret += '  check '+ constr +',\n';    
                     } else {                     // general column level constraint
-                        ret +=' constraint '+concatNames(ddl.objPrefix(),parent_child,'_ck')+'\n';
+                        ret +=' constraint '+concatNames(ddl.objPrefix(),parent_child,DEFAULT_NAMING.ck)+'\n';
                         ret += tab +  tab+offset +'check '+ constr +'';    
                     } 
                     return ret;
                 }
                 const values = this.getValues('check');
-                ret +=' constraint '+concatNames(ddl.objPrefix(),parent_child,'_ck')+'\n';
+                ret +=' constraint '+concatNames(ddl.objPrefix(),parent_child,DEFAULT_NAMING.ck)+'\n';
                 ret += tab +  tab+offset +'check ('+this.parseName()+' in ('+values+'))';                    
             }
             return ret;
@@ -730,7 +647,7 @@ let tree = (function(){
         
         this.getExplicitPkName = function() {
             if( this.isOption('pk') ) {
-                if( this.parseType() == 'table' )
+                if( this.inferType() == 'table' )
                     return this.getOptionValue('pk');
                 else
                     return this.parseName();
@@ -961,7 +878,7 @@ let tree = (function(){
         };
 
         this.getGenIdColName = function () {
-            if( this.parseType() != 'table' )
+            if( this.inferType() != 'table' )
                 return null;
             if( this.getExplicitPkName() != null )
                 return null;
@@ -997,7 +914,7 @@ let tree = (function(){
             }
 
             if( !this.isMany2One() ) {
-                if( this.parent != null && this.parseType() == 'table' ) {
+                if( this.parent != null && this.inferType() == 'table' ) {
                     const pkn = this.parent.getPkName();
                     if( pkn.indexOf(',') < 0 )
                         this.fks[singular(this.parent.parseName())+'_id']=this.parent.parseName();
@@ -1352,7 +1269,7 @@ let tree = (function(){
                     let type = 'number';
                     const child = node.findChild(pkName);
                     if( child != null )
-                        type = child.parseType();
+                        type = this.parseType(child);
                     ret += tab +  pkName + pad + type + ',\n';
                 }
             }
