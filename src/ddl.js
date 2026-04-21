@@ -291,7 +291,7 @@ export const quicksql = (function () {
                         let type = 'number';
                         const child = descendants[i].findChild(pkName);
                         if( child != null )
-                            type = child.parseType(true);
+                            type = child.inferType();
                         item.columns.push({name: pkName, datatype: type});
                     }
                 }
@@ -307,14 +307,14 @@ export const quicksql = (function () {
                             if( col == ',' )
                                 continue;
                             const pChild = refNode.findChild(col);
-                            item.columns.push({name: col, datatype: pChild.parseType(true)});
+                            item.columns.push({name: col, datatype: pChild.inferType()});
                         }
                         continue;
                     }
                     let type = 'number';
                     const attr = descendants[i].findChild(fk);
                     if( attr != null )
-                        type = attr.parseType('fk');		
+                        type = attr.inferType();		
                     let refNode = this.find(parent);
                     let _id = ''; 
                     if( refNode != null ) {
@@ -341,7 +341,7 @@ export const quicksql = (function () {
                         continue;
                     if( child.parseName() == explicitPk )
                         continue;
-                    item.columns.push({name: child.parseName(''), datatype: child.parseType(true)});
+                    item.columns.push({name: child.parseName(''), datatype: child.inferType()});
                     if( 0 < child.indexOf('file') ) {
                         const col = child.parseName();
                         item.columns.push({name: col+'_filename', datatype: 'varchar2(255'+this.semantics()+ ')'});

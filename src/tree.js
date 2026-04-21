@@ -389,32 +389,28 @@ let tree = (function(){
 
             return this.sugarcoatName(nameFrom, nameTo);
         };
-        this.parseType = function( pure ) {
+        this.parseType = function() {
             if( this.children != null && 0 < this.children.length )
                 return 'table';
-
-            const src = this.src;    
-
+            const src = this.src;
             if( src[0].value == 'view' || 1 < src.length && src[1].value == '=' ) 
                 return 'view';
             if( src[0].value == 'dv' )
                 return 'dv';
-                        
             if( this.parent == null )
                 return 'table';
-    
+            const { type, booleanCheck, isNativeBoolean, parent_child } = this._inferTypeFull();
+            return this._buildColumnConstraints(type, booleanCheck, isNativeBoolean, parent_child);
+        };
+
+        this._inferTypeFull = function() {
+            const src = this.src;
             var char = ddl.semantics();
-            var len = 4000;	
+            var len = 4000;
             if( src[0].value.endsWith('_name') || src[0].value.startsWith('name') || src[0].value.startsWith('email') )
                 len = ddl.getOptionValue('namelen');
-            var start;
-            var end;
-            var values;
-
             const vcPos = this.indexOf('vc', true);  
             if( 0 < vcPos ) {
-                start = src[vcPos].begin;
-                end = src[vcPos].end;
                 let varcharLen = src[vcPos].value.substring('vc'.length);
                 if( '' == varcharLen ) {
                     let oParenPos = this.indexOf('(');
@@ -431,10 +427,6 @@ let tree = (function(){
                         len =  len * 1024 -1 ;   
             }
             var ret = 'varchar2('+len+char+')';
-            if( pure == 'plsql' )
-                ret = 'varchar2';
-            //if( pure == 'fk' )
-                //ret = null;
             const datePos = this.indexOf('date');
             if( this._slashPos === undefined ) this._slashPos = this.indexOf('/');
             const slashPos = this._slashPos;
@@ -450,13 +442,8 @@ let tree = (function(){
                 ret = 'number';
             if( this.occursBeforeOption('int', true) )
                 ret = 'integer';
-
-            if( 0 < vcPos ) {
+            if( 0 < vcPos )
                 ret = 'varchar2('+len+char+')';
-                if( pure == 'plsql' )
-                    ret = 'varchar2';
-            }
-
             const vector = this.vectorType('vector'); 
             if( vector != null ) 
                 ret = vector;
@@ -465,10 +452,7 @@ let tree = (function(){
                 if( vect != null ) 
                     ret = vect;
             }
-
             const parent_child = concatNames(parent.parseName(),'_',this.parseName());
-
-
             let booleanCheck = '';
             if( src[0].value.endsWith('_yn') || src[0].value.startsWith('is_') ) {
                 ret = 'varchar2(1'+ddl.semantics()+ ')';
@@ -490,8 +474,6 @@ let tree = (function(){
                 ret = 'boolean';
             }
             let isNativeBoolean = (ret === 'boolean');
-
-
             if( this.indexOf('phone_number') == 0 )
                 ret = 'number';
             let from = this.indexOf('num', true);
@@ -501,7 +483,7 @@ let tree = (function(){
             if( 0 < from && 0 < to )
                 ret += this.content.substring(src[from+1].begin, src[to].end).toLowerCase();
             if( 0 <= datePos || 0 == this.indexOf('hiredate') || src[0].value.endsWith('_date') || src[0].value.startsWith('date_of_')
-             || 1 < src.length && src[1].value == 'd' //0 < type.indexOf(' d') && type.indexOf(' d') == type.length-' d'.length 
+             || 1 < src.length && src[1].value == 'd'
              || src[0].value.startsWith('created')
              || src[0].value.startsWith('updated')
             )        		
@@ -518,42 +500,54 @@ let tree = (function(){
                         ret = 'clob check ('+this.parseName()+' is json)';
                 }
             }
-
             for( let i in geoTypes ) {
                 if( this.occursBeforeOption(geoTypes[i]) ) {
                     ret = 'sdo_geometry';
                     break;
                 }
             }
-
             if( this.isOption('domain') ) {
                 if( dbVer != null && 0 < dbVer.length && 23 <= getMajorVersion(dbVer) ) {
                     ret = this.getOptionValue('domain');
                 }
             }
-
             if( this.occursBeforeOption('tswltz') && slashPos !== 0  )
                 ret = TSWLTZ_LOWER;
             else if( this.occursBeforeOption('tswtz') || this.occursBeforeOption('tstz') )
                 ret = TSWTZ_LOWER;
             else if( this.occursBeforeOption('ts') )
                 ret = TIMESTAMP_LOWER;
+            return { type: ret, booleanCheck, isNativeBoolean, parent_child };
+        };
 
-            if( pure ) {
-                if( this.isOption('fk') || 0 < this.indexOf('reference', true) ) {
-                    const parent = this.refId();
-                    let type = 'number';
-                    if( ret == 'integer' )
-                        type = ret;
-                    let refNode = ddl.find(parent);
-                    if( refNode != null && refNode.getExplicitPkName() != null )
-                        type = refNode.getPkType();
-                    return type;
-                }     
-                return ret;
-            }	
+        this.inferType = function() {
+            if( this.children != null && 0 < this.children.length )
+                return 'table';
+            const src = this.src;
+            if( src[0].value == 'view' || 1 < src.length && src[1].value == '=' ) 
+                return 'view';
+            if( src[0].value == 'dv' )
+                return 'dv';
+            if( this.parent == null )
+                return 'table';
+            const { type } = this._inferTypeFull();
+            if( this.isOption('fk') || 0 < this.indexOf('reference', true) ) {
+                const parent = this.refId();
+                let fkType = 'number';
+                if( type == 'integer' )
+                    fkType = type;
+                let refNode = ddl.find(parent);
+                if( refNode != null && refNode.getExplicitPkName() != null )
+                    fkType = refNode.getPkType();
+                return fkType;
+            }
+            return type;
+        };
 
-            return this._buildColumnConstraints(ret, booleanCheck, isNativeBoolean, parent_child);
+        this.getPlsqlType = function() {
+            let t = this.inferType();
+            if( t.startsWith('varchar2') ) return 'varchar2';
+            return t;
         };
 
         this._buildColumnConstraints = function(ret, booleanCheck, isNativeBoolean, parent_child) {
@@ -933,7 +927,7 @@ let tree = (function(){
             let id = this.getGenIdColName();
             if( id == null ) {
                 const cname = this.getExplicitPkName();
-                return this.findChild(cname).parseType(pure=>true);
+                return this.findChild(cname).inferType();
             }
             return 'integer';
         }
@@ -998,14 +992,14 @@ let tree = (function(){
                             continue;
                         const pChild = refNode.findChild(col);
                         let pad = tab+' '.repeat(this.maxChildNameLen() - col.length);
-                        ret += tab + col   + pad + pChild.parseType(pure=>true) + ',\n';
+                        ret += tab + col   + pad + pChild.inferType() + ',\n';
                     }
                     continue;
                 }
                 let type = 'number';
                 const attr = this.findChild(fk);
                 if( attr != null )
-                    type = attr.parseType('fk');
+                    type = attr.inferType();
                 let refNode = ddl.find(parent);
                 let _id = '';
                 if( refNode != null ) {
@@ -1205,7 +1199,7 @@ let tree = (function(){
             if( _db23plus ) {
                 for( let i = 0; i < this.children.length; i++ ) {
                     let child = this.children[i];
-                    if( child.children.length == 0 && child.parseType(true).startsWith('vector') ) {
+                    if( child.children.length == 0 && child.inferType().startsWith('vector') ) {
                         ret += 'create vector index '+objName+'_vi'+(num++)+' on '+objName+' ('+child.parseName()+')\n';
                         ret += '    organization neighbor partitions\n';
                         ret += '    with distance cosine;\n\n';
@@ -1215,7 +1209,7 @@ let tree = (function(){
 
             for( let i = 0; i < this.children.length; i++ ) {
                 let child = this.children[i];
-                if( child.children.length == 0 && child.parseType(true) == 'sdo_geometry' ) {
+                if( child.children.length == 0 && child.inferType() == 'sdo_geometry' ) {
                     ret += 'create index '+objName+'_si'+(num++)+' on '+objName+' ('+child.parseName()+')\n';
                     ret += '    indextype is mdsys.spatial_index_v2;\n\n';
                 }
@@ -1796,7 +1790,7 @@ let tree = (function(){
             }
             for( const child of this.regularColumns() ) {
                 ret += ',\n';
-                ret += tab+tab+'P_'+child.parseName()+'   '+mode+'  '+child.parseType('plsql')+modifier;
+                ret += tab+tab+'P_'+child.parseName()+'   '+mode+'  '+child.getPlsqlType()+modifier;
             }
             ret += '\n    )';
             return ret;
@@ -2101,7 +2095,7 @@ let tree = (function(){
                             values[0] = v;
                         }
                     }
-                    let datum = generateSample(objName, cname, child.parseType(pure=>true), values);
+                    let datum = generateSample(objName, cname, child.inferType(), values);
                     insert += tab + translate(ddl.getOptionValue('Data Language'), datum)+',\n';
                 }
                 insert = trimTrailingComma(insert);
@@ -2269,7 +2263,7 @@ let tree = (function(){
         };
 
         this.getBaseType = function() {
-            let type = this.parseType(true);
+            let type = this.inferType();
             let idx = type.indexOf(' not null');
             if (idx > 0) type = type.substring(0, idx);
             idx = type.indexOf('\n');
