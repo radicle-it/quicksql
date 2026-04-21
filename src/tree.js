@@ -1795,96 +1795,90 @@ let tree = (function(){
             ret += '\n    )';
             return ret;
         };
-        this.procBody = function( kind /* get, insert, update */ ) {
+        this._getRowBody = function() {
             const idColName = this.getPkName();
             let objName = ddl.objPrefix()  + this.parseName();
             let ret =    tab+'is \n';
             ret +=    tab+'begin \n';
             // G-4387 / G-3145: use SELECT INTO instead of cursor FOR LOOP for PK lookup (single-row result)
-            if( kind == 'get' ) {
-                const selectCols = [];
-                const intoCols   = [];
-                for( const fk in this.fks ) {
-                    selectCols.push( fk );
-                    intoCols.push(   'p_'+fk );
-                }
-                for( const gchild of this.regularColumns() ) {
-                    const cn = gchild.parseName().toLowerCase();
-                    selectCols.push( cn );
-                    intoCols.push(   'p_'+cn );
-                }
-                if( selectCols.length > 0 ) {
-                    const pad = tab+tab+'       ';
-                    ret += tab+tab+'select '+selectCols.join( ',\n'+pad )+'\n';
-                    ret += tab+tab+'  into '+intoCols.join(   ',\n'+pad )+'\n';
-                    ret += tab+tab+'  from '+objName+'\n';
-                    ret += tab+tab+' where '+idColName+' = p_'+idColName+';\n';
-                }
-                ret += tab+'exception\n';
-                ret += tab+tab+'when no_data_found then\n';
-                ret += tab+tab+tab+'null;\n';
-                ret += tab+'end get_row;\n';
-                ret += ' \n';
-                return ret;
+            const selectCols = [];
+            const intoCols   = [];
+            for( const fk in this.fks ) {
+                selectCols.push( fk );
+                intoCols.push(   'p_'+fk );
             }
-            let prelude = '';
-            if( kind == 'insert' ) {
-                prelude =    tab+tab+'insert into '+objName+' ( \n';
-                prelude += tab+tab+tab+idColName;
+            for( const gchild of this.regularColumns() ) {
+                const cn = gchild.parseName().toLowerCase();
+                selectCols.push( cn );
+                intoCols.push(   'p_'+cn );
             }
-            if( kind == 'update' ) {
-                prelude =    tab+tab+'update  '+objName+' set \n';
-                prelude += tab+tab+tab+idColName+' = p_'+idColName;
+            if( selectCols.length > 0 ) {
+                const pad = tab+tab+'       ';
+                ret += tab+tab+'select '+selectCols.join( ',\n'+pad )+'\n';
+                ret += tab+tab+'  into '+intoCols.join(   ',\n'+pad )+'\n';
+                ret += tab+tab+'  from '+objName+'\n';
+                ret += tab+tab+' where '+idColName+' = p_'+idColName+';\n';
             }
-            ret += prelude;
-            for( let fk in this.fks ) {	
-                let parent = this.fks[fk];				
-                let type = 'number';
-                let refNode = ddl.find(parent);
-                if( refNode != null && refNode.getExplicitPkName() != null )
-                    type = refNode.getPkType();
-                //pad = tab+tab+' '.repeat(this.maxChildNameLen() - fk.length);
-                if( kind == 'insert' || kind == 'update' ) 
-                    ret += ',\n';
-                let row = '';
-                if( kind == 'insert' )
-                    row = tab+tab+tab+fk;
-                if( kind == 'update' )
-                    row = tab+tab+tab+fk+' = P_'+fk;
-                ret += row;
+            ret += tab+'exception\n';
+            ret += tab+tab+'when no_data_found then\n';
+            ret += tab+tab+tab+'null;\n';
+            ret += tab+'end get_row;\n';
+            ret += ' \n';
+            return ret;
+        };
+
+        this._insertRowBody = function() {
+            const idColName = this.getPkName();
+            let objName = ddl.objPrefix()  + this.parseName();
+            let ret =    tab+'is \n';
+            ret +=       tab+'begin \n';
+            ret +=       tab+tab+'insert into '+objName+' ( \n';
+            ret +=       tab+tab+tab+idColName;
+            for( let fk in this.fks ) {
+                ret += ',\n';
+                ret += tab+tab+tab+fk;
             }
             for( const child of this.regularColumns() ) {
-                if( kind == 'insert' || kind == 'update' )
-                    ret += ',\n';
-                let row = '';
-                if( kind == 'insert' )
-                    row = tab+tab+tab+child.parseName().toLowerCase();
-                if( kind == 'update' )
-                    row = tab+tab+tab+child.parseName().toLowerCase()+' = P_'+child.parseName().toLowerCase();
-                ret += row;
+                ret += ',\n';
+                ret += tab+tab+tab+child.parseName().toLowerCase();
             }
-            if( kind == 'insert' ) {
-                ret +=    '\n'+tab+tab+') values ( \n';
-                ret +=    tab+tab+tab+'p_'+idColName;
-                for( let fk in this.fks ) {
-                    ret += ',\n';
-                    ret += tab+tab+tab+'p_'+fk;
-                }
-                for( const child of this.regularColumns() ) {
-                    ret += ',\n';
-                    ret += tab+tab+tab+'p_'+child.parseName();
-                }
+            ret +=    '\n'+tab+tab+') values ( \n';
+            ret +=    tab+tab+tab+'p_'+idColName;
+            for( let fk in this.fks ) {
+                ret += ',\n';
+                ret += tab+tab+tab+'p_'+fk;
             }
-            let finale = '';
-            if( kind == 'insert' )
-                finale = '\n'+tab+tab+');';
-            if( kind == 'update' )
-                finale = '\n'+tab+tab+'where '+idColName+' = p_'+idColName+';';
-            ret += finale;
-            ret += '\n'+tab+'end '+kind+'_row;\n ';
+            for( const child of this.regularColumns() ) {
+                ret += ',\n';
+                ret += tab+tab+tab+'p_'+child.parseName();
+            }
+            ret += '\n'+tab+tab+');';
+            ret += '\n'+tab+'end insert_row;\n ';
             ret += '\n ';
             return ret;
         };
+
+        this._updateRowBody = function() {
+            const idColName = this.getPkName();
+            let objName = ddl.objPrefix()  + this.parseName();
+            let ret =    tab+'is \n';
+            ret +=       tab+'begin \n';
+            ret +=       tab+tab+'update  '+objName+' set \n';
+            ret +=       tab+tab+tab+idColName+' = p_'+idColName;
+            for( let fk in this.fks ) {
+                ret += ',\n';
+                ret += tab+tab+tab+fk+' = P_'+fk;
+            }
+            for( const child of this.regularColumns() ) {
+                ret += ',\n';
+                ret += tab+tab+tab+child.parseName().toLowerCase()+' = P_'+child.parseName().toLowerCase();
+            }
+            ret += '\n'+tab+tab+'where '+idColName+' = p_'+idColName+';';
+            ret += '\n'+tab+'end update_row;\n ';
+            ret += '\n ';
+            return ret;
+        };
+
         this.generateTAPI = function() {
             if( this.children.length == 0 ) 
                 return '';
@@ -1905,15 +1899,15 @@ let tree = (function(){
             ret += 'create or replace package body '+ objName.toLowerCase() +'_API\nis\n\n'.toLowerCase();
             ret += this.procDecl('get'); 
             ret += '\n';
-            ret += this.procBody('get');
+            ret += this._getRowBody();
 
             ret += this.procDecl('insert'); 
             ret += '\n';
-            ret += this.procBody('insert'); 
+            ret += this._insertRowBody(); 
 
             ret += this.procDecl('update'); 
             ret += '\n';
-            ret += this.procBody('update'); 
+            ret += this._updateRowBody(); 
 
             ret += '    procedure delete_row (\n';
             ret += '        p_'+idColName+'              in integer\n';
