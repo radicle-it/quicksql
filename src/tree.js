@@ -1356,6 +1356,28 @@ let tree = (function(){
             }
             let objName = ddl.objPrefix()  + this.parseName();
             var chunks = this.src;
+            const setup = this._buildViewSetup(chunks);
+            if( setup == null ) return '';
+            var ret = 'create or replace view ' +objName;
+            if( this.annotations != null )
+                ret += '\nannotations (' + this.annotations + ')';
+            ret += ' as\n';
+            ret += 'select\n';
+            ret += this._buildViewColList(chunks, setup.aliasMap, setup.tblCache, setup.colCnts, setup.tblTransCols, setup.maxLen);
+            ret = trimTrailingComma(ret);
+            const { sortedTables, joinConditions } = this._sortViewTables(chunks, setup.tblCache);
+            ret += 'from\n';
+            ret += this._buildViewFromClause(sortedTables, setup.aliasMap, joinConditions, setup.tblTransCols, setup.tblCache);
+            ret = ret.toLowerCase();
+            if( ret.endsWith('\n') )
+                ret = ret.trimEnd(); 
+            if( !ret.endsWith('\n') )
+                ret += '\n';         
+            ret += '/\n'; 
+            return ret.toLowerCase();
+        };
+
+        this._buildViewSetup = function(chunks) {
             // Build alias map and cache table lookups (avoid repeated ddl.find calls)
             let aliasMap = {};
             let tblCache = {};
@@ -1363,16 +1385,11 @@ let tree = (function(){
                 aliasMap[chunks[i].value] = amend_reserved_word(chunks[i].value);
                 tblCache[chunks[i].value] = ddl.find(chunks[i].value);
             }
-            var ret = 'create or replace view ' +objName;
-            if( this.annotations != null )
-                ret += '\nannotations (' + this.annotations + ')';
-            ret += ' as\n';
-            ret += 'select\n';
             var maxLen = 0;
             for( var i = 2; i < chunks.length; i++ ) {
                 let tbl = tblCache[chunks[i].value];
                 if( tbl == null )
-                    return '';
+                    return null;   // unknown table reference — caller should return ''
                 let alias = aliasMap[chunks[i].value];
                 var len = (alias+'.id').length;
                 if( maxLen < len )
@@ -1418,7 +1435,11 @@ let tree = (function(){
                     }
                 }
             }
+            return { aliasMap, tblCache, maxLen, colCnts, tblTransCols };
+        };
 
+        this._buildViewColList = function(chunks, aliasMap, tblCache, colCnts, tblTransCols, maxLen) {
+            let ret = '';
             for( let i = 2; i < chunks.length; i++ ) {
                 let tbl = tblCache[chunks[i].value];
                 if( tbl == null )
@@ -1447,11 +1468,11 @@ let tree = (function(){
                 }
                 if( tbl.hasRowVersion() ) {
                     let pad = tab+' '.repeat(tbl.maxChildNameLen() - 'row_version'.length);
-                    ret += tab + alias+'.'+ 'row_version' + pad + singular(tblName)+'_'+ 'row_version,\n';
+                    ret += tab + alias+'.'+'row_version' + pad + singular(tblName)+'_'+'row_version,\n';
                 }
                 if( tbl.hasRowKey() ) {
                     let pad = tab+' '.repeat(tbl.maxChildNameLen() - 'ROW_KEY'.length);
-                    ret += tab + alias+'.'+ 'ROW_KEY' + pad + singular(tblName)+'_'+ 'ROW_KEY,\n';
+                    ret += tab + alias+'.'+'ROW_KEY' + pad + singular(tblName)+'_'+'ROW_KEY,\n';
                 }
                 if( tbl.hasAuditCols() ) {
                     let created = ddl.getOptionValue('createdcol');
@@ -1468,7 +1489,10 @@ let tree = (function(){
                     ret += tab + alias+'.'+  updatedby + pad + singular(tblName)+'_'+ updatedby + ',\n';
                 }
             }
-            ret = trimTrailingComma(ret);
+            return ret;
+        };
+
+        this._sortViewTables = function(chunks, tblCache) {
             // Build set of view table names for quick lookup
             let viewTableNames = {};
             for( let i = 2; i < chunks.length; i++ )
@@ -1538,8 +1562,11 @@ let tree = (function(){
                     break;
                 }
             }
-            // Generate FROM clause with ANSI JOINs
-            ret += 'from\n';
+            return { sortedTables, joinConditions };
+        };
+
+        this._buildViewFromClause = function(sortedTables, aliasMap, joinConditions, tblTransCols, tblCache) {
+            let ret = '';
             let transContext = ddl.getOptionValue('transcontext');
             for( let si = 0; si < sortedTables.length; si++ ) {
                 let tblName = sortedTables[si];
@@ -1572,13 +1599,7 @@ let tree = (function(){
                     ret += tab + tab + 'and ' + tAlias + '.language_code = ' + transContext + '\n';
                 }
             }
-            ret = ret.toLowerCase();
-            if( ret.endsWith('\n') )
-                ret = ret.trimEnd(); 
-            if( !ret.endsWith('\n') )
-                ret += '\n';         
-            ret += '/\n'; 
-            return ret.toLowerCase();
+            return ret;
         };
 
         this.restEnable = function() {
