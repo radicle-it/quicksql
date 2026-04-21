@@ -7,6 +7,8 @@ import json2qsql from './json2qsql.js';
 import errorMsgs from './errorMsgs.js';
 import { singular, canonicalObjectName, getMajorVersion } from './naming.js';
 import split_str from './split_str.js';
+import type { DdlContext, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
+export type { DdlContext, ErdColumn, ErdItem, ErdLink, ErdOutput };
 
 // ── PK / date-type canonical string constants ────────────────────────────────
 
@@ -25,48 +27,6 @@ interface OptionDef {
 
 /** Mutable copy of the options record built per-instance from defaultOptions. */
 type OptionsRecord = Record<string, OptionDef>;
-
-export interface ErdColumn {
-    name:     string;
-    datatype: string;
-}
-
-export interface ErdItem {
-    name:    string;
-    schema:  string | null;
-    columns: ErdColumn[];
-    type?:   string;
-}
-
-export interface ErdLink {
-    source:    string;
-    source_id: string;
-    target:    string;
-    target_id: string;
-    mandatory: boolean;
-}
-
-export interface ErdOutput {
-    items:  ErdItem[];
-    links:  ErdLink[];
-    groups: Record<string, string[]>;
-}
-
-/**
- * The DdlContext interface — subset of quicksql exposed to tree.js / OracleDDLGenerator.
- * Export this so tree.ts can use it as the type of the `ddl` closure variable.
- */
-export interface DdlContext {
-    getOptionValue(key: string): string | number | boolean | null;
-    optionEQvalue(key: string, value: unknown): boolean;
-    objPrefix(withoutSchema?: string): string;
-    semantics(): string;
-    find(name: string): any;                  // ddlnode — typed as any until tree.ts
-    forest:            any[];                 // ddlnode[] — typed as any until tree.ts
-    postponedAlters:   string[];
-    postponedAltersSet: Set<string>;
-    data?:             unknown;
-}
 
 // ── normalize() ──────────────────────────────────────────────────────────────
 
