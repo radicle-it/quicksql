@@ -13878,7 +13878,7 @@ end;
 */`, this._ddl = l, l;
   }
   getErrors() {
-    return this._errors != null ? this._errors : (this._errors = ba.findErrors(this, this.input), this._errors);
+    return this._errors != null ? this._errors : (this._errors = ba.findErrors(this), this._errors);
   }
   version() {
     return Re();

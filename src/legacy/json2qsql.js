@@ -1,5 +1,5 @@
-import {singular} from './legacy/naming.js';
-import {qsql_version} from './legacy/ddl.js';
+import {singular} from './naming.js';
+import {qsql_version} from './ddl.js';
 
 var json2qsql = (function () {
 

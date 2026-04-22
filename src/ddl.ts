@@ -568,7 +568,7 @@ export class quicksql implements DdlContext {
 
     getErrors(): unknown[] {
         if (this._errors != null) return this._errors;
-        this._errors = errorMsgs.findErrors(this, this.input) as unknown[];
+        this._errors = errorMsgs.findErrors(this) as unknown[];
         return this._errors;
     }
 
@@ -588,7 +588,7 @@ export class quicksql implements DdlContext {
 // ── Module-level API functions ────────────────────────────────────────────────
 
 export function fromJSON(input: unknown, name?: string): string {
-    return json2qsql(input, name) as string;
+    return json2qsql(input as string, name) as string;
 }
 
 export function toERD(input: string, options?: unknown): ErdOutput {

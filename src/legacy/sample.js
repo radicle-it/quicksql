@@ -1,5 +1,5 @@
 import Chance from 'chance';
-import lexer from './legacy/lexer.js';
+import lexer from './lexer.js';
 
 
 export function generateSample( lTable, lColumn, lType, values ) {
