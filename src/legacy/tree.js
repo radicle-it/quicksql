@@ -1,6 +1,6 @@
 import {singular,concatNames,canonicalObjectName, getMajorVersion} from './naming.js';
 import translate from './translate.js';
-import {generateSample, resetSeed} from './sample.js';
+import {generateSample, resetSeed} from '../sample.js';
 import lexer from './lexer.js';
 import amend_reserved_word from './reserved_words.js';
 import split_str from './split_str.js';

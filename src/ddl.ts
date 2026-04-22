@@ -213,14 +213,14 @@ export class quicksql implements DdlContext {
 
     find(name: string): any {
         if (this.name2node != null)
-            return this.name2node[canonicalObjectName(name) as string];
+            return this.name2node[canonicalObjectName(name) as string] ?? null;
 
         this.name2node = {};
         for (const root of this.forest) {
             for (const node of (root.descendants() as any[]))
                 this.name2node[node.parseName()] = node;
         }
-        return this.name2node[canonicalObjectName(name) as string];
+        return this.name2node[canonicalObjectName(name) as string] ?? null;
     }
 
     descendants(): any[] {
@@ -297,7 +297,7 @@ export class quicksql implements DdlContext {
                     if (rname != null && !rname.includes(',')) type = refNode.getPkType();
                 } else {
                     const altRef = this.find(fk);
-                    if (altRef?.isMany2One() && !fk.endsWith('_id'))
+                    if (altRef?.isMany2One?.() && !fk.endsWith('_id'))
                         fkName = (singular(fk) ?? fk) + '_id';
                 }
                 item.columns.push({ name: fkName, datatype: type });

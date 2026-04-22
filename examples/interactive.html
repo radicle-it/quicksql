@@ -267,7 +267,7 @@ emp_v = departments employees
 <footer id="status">pronto</footer>
 
 <script type="module">
-import quicksql from '../dist/quick-sql.js';
+import { toDDL, toERD } from '../dist/quick-sql.js';
 // Graph resolved lazily inside initGraph() — X6 load failure won't break DDL
 
 // ════════════════════════════════════════════════════════════════
@@ -889,7 +889,7 @@ function updateDiagram(keepPositions = false) {
     const src = inputEl.value;
     if (x6graph && src === lastRenderedInput) return;
     try {
-        const data = quicksql.toERD(src);
+        const data = toERD(src);
         // Snapshot previous item list BEFORE overwriting lastErdData so we can
         // bridge positions when settings change table names (prefix / schema).
         const prevItems = lastErdData ? lastErdData.items : [];
@@ -956,7 +956,7 @@ function update() {
     const src = inputEl.value;
     qsHl.innerHTML = highlightQuickSQL(src) + '\n ';
     try {
-        const ddl = quicksql.toDDL(src);
+        const ddl = toDDL(src);
         outputEl.innerHTML = highlightSQL(ddl) + '\n ';
         errorEl.style.display = 'none';
         statusEl.textContent = `${ddl.split('\n').length} righe DDL generate`;

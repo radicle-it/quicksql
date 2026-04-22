@@ -1,4 +1,4 @@
-import  {quicksql,fromJSON} from "../src/ddl.js";
+import  {quicksql,fromJSON} from "../src/legacy/ddl.js";
 
 import {checkNoError} from './error_msg_tests.js'
 

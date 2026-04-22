@@ -1,4 +1,4 @@
-import split_str from './split_str.js';
+import split_str from './legacy/split_str.js';
 
 const findErrors = (function () {
 

@@ -2,8 +2,8 @@
 
 import tree, { OracleDDLGenerator, DEFAULT_NAMING } from './tree.js';
 import lexer from './lexer.js';
-import json2qsql from './json2qsql.js'
-import errorMsgs from './errorMsgs.js'
+import json2qsql from '../json2qsql.js'
+import errorMsgs from '../errorMsgs.js'
 import {canonicalObjectName, getMajorVersion} from './naming.js'
 
 const identityDataType = 'identityDataType';

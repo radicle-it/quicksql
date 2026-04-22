@@ -39,12 +39,15 @@ export interface ErdOutput {
  * closure variable — keeping the two files decoupled.
  */
 export interface DdlContext {
+    input:              string;
     getOptionValue(key: string): string | number | boolean | null;
     optionEQvalue(key: string, value: unknown): boolean;
     objPrefix(withoutSchema?: string): string;
     semantics(): string;
-    find(name: string): any;           // DdlNode — typed properly once tree.ts exists
-    forest:             any[];         // DdlNode[] — same
+    find(name: string): any;                         // DdlNode — typed properly once tree.ts exists
+    additionalColumns(): Record<string, string>;
+    setOptions(line: string): void;
+    forest:             any[];                       // DdlNode[] — same
     postponedAlters:    string[];
     postponedAltersSet: Set<string>;
     data?:              unknown;
