@@ -5,7 +5,8 @@ interface ParsedNode {
     line:       number;
     content:    string;
     src:        Array<{ value: string; begin: number }>;
-    parseType(): string;
+    /** Returns 'table', 'view', 'dv', or an SQL data-type string. */
+    inferType(): string;
     parseName(): string;
     descendants(): ParsedNode[];
     isOption(key: string): boolean;
@@ -55,8 +56,13 @@ const tableDirectives = [
     ,'check'
     ,'colprefix'
     ,'compress','compressed'
+    ,'flashback','fda'
+    ,'immutable'
     ,'insert'
     ,'rest'
+    ,'rowkey'
+    ,'rowversion'
+    ,'soda'
     ,'unique','uk'
     ,'pk'
     ,'cascade','setnull'
@@ -68,6 +74,8 @@ const columnDirectives = [
     ,'check'
     ,'constant'
     ,'default'
+    ,'domain'
+    ,'hidden','invincible'
     ,'values'
     ,'upper'
     ,'lower'
@@ -77,6 +85,7 @@ const columnDirectives = [
     ,'cascade','setnull'
     ,'fk'
     ,'pk'
+    ,'trans','translation','translations'
 ];
 
 // ── Messages ───────────────────────────────────────────────────────────────────
@@ -99,7 +108,7 @@ function checkSyntax(parsed: ParsedContext): SyntaxError[] {
 
     let branches: ParsedNode[] = [];
     for (let i = 0; i < parsed.forest.length; i++) {
-        if (parsed.forest[i].parseType() === 'table')
+        if (parsed.forest[i].inferType() === 'table')
             branches = branches.concat(parsed.forest[i].descendants());
     }
     ret = ret.concat(line_mismatch(branches));
@@ -134,7 +143,7 @@ function checkSyntax(parsed: ParsedContext): SyntaxError[] {
 }
 
 function directive_typo(_ddl: ParsedContext, node: ParsedNode): SyntaxError[] {
-    const isTable = node.parseType() === 'table';
+    const isTable = node.inferType() === 'table';
     const ret: SyntaxError[] = [];
     const chunks = node.src;
     let sawSlash = false;
@@ -165,7 +174,7 @@ function directive_typo(_ddl: ParsedContext, node: ParsedNode): SyntaxError[] {
 
 function ref_error_in_view(ddl: ParsedContext, node: ParsedNode): SyntaxError[] {
     const ret: SyntaxError[] = [];
-    if (node.parseType() === 'view') {
+    if (node.inferType() === 'view') {
         const chunks = node.src;
         for (let j = 2; j < chunks.length; j++) {
             const tbl = ddl.find(chunks[j].value);

@@ -374,9 +374,9 @@ export class DdlNode {
         let tmp = this.indexOf('/');
         if (0 < tmp) nameTo = tmp;
         tmp = this.indexOf('[');
-        if (0 < tmp) nameTo = tmp;
+        if (0 < tmp && tmp < nameTo) nameTo = tmp;
         tmp = this.indexOf('=');
-        if (0 < tmp) nameTo = tmp;
+        if (0 < tmp && tmp < nameTo) nameTo = tmp;
 
         for (let i = 0; i < datatypes.length; i++) {
             let pos = this.indexOf(datatypes[i]);
@@ -848,6 +848,16 @@ function recognize(parsed: DdlContext): DdlNode[] {
         if (t.value === '\n') {
             if (poundDirective === null) {
                 line = line.replace(/\r/g, '');
+
+                // Merge multi-line {…} annotation blocks into a single logical line.
+                // Count unescaped braces to detect an unclosed block.
+                const openBraces  = (line.match(/\{/g) ?? []).length;
+                const closeBraces = (line.match(/\}/g) ?? []).length;
+                if (openBraces > closeBraces) {
+                    // Annotation block is still open — keep accumulating tokens.
+                    continue;
+                }
+
                 const nc = line.replace(/\r/g, '').replace(/ /g, '');
                 if (nc === '') { line = ''; continue; }
 
@@ -1840,7 +1850,7 @@ export class OracleDDLGenerator {
         if (insert !== '') insert += '\ncommit;\n\n';
         const idColName = node.getGenIdColName();
         if (idColName !== null && 1 < node.cardinality() && !this._ddl.optionEQvalue('pk', 'guid')) {
-            insert += 'alter table ' + objName + '\nmodify ' + idColName + " generated 'always ' as identity restart start with " + (node.cardinality() + 1) + ';\n\n';
+            insert += 'alter table ' + objName + '\nmodify ' + idColName + ' generated always  as identity restart start with ' + (node.cardinality() + 1) + ';\n\n';
         }
         tab2inserts[objName] = insert;
         for (let i = 0; i < node.children.length; i++) {

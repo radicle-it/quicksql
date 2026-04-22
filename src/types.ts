@@ -22,13 +22,13 @@ export interface ErdLink {
     source_id: string;
     target:    string;
     target_id: string;
-    mandatory: boolean;
+    mandatory?: boolean;
 }
 
 export interface ErdOutput {
-    items:  ErdItem[];
-    links:  ErdLink[];
-    groups: Record<string, string[]>;
+    items:   ErdItem[];
+    links:   ErdLink[];
+    groups?: Record<string, string[]>;
 }
 
 // ── DdlContext ─────────────────────────────────────────────────────────────────
