@@ -2,8 +2,8 @@
 
 import fs from "fs";
 
-import {fromJSON} from "../src/legacy/ddl.js";
-import lexer from '../src/legacy/lexer.js'
+import {fromJSON} from "../src/ddl.js";
+import lexer from '../src/lexer.js'
 import errorMsgs from '../src/errorMsgs.js'
 import {resetSeed} from '../src/sample.js'
 

@@ -1,4 +1,4 @@
-import  {quicksql, toERD} from "../src/legacy/ddl.js";
+import  {quicksql, toERD} from "../src/ddl.js";
 import { computeHighlightTree, highlightColor, normalizeTableName } from "../src/quick-erd/highlight.js";
 
 import fs from "fs";
