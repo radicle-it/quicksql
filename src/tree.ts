@@ -2275,6 +2275,180 @@ export class OracleDDLGenerator {
 
         return output;
     }
+
+    generateFullDDL(): string {
+        const forest      = this._ddl.forest      as DdlNode[];
+        const descendants = this._ddl.descendants() as DdlNode[];
+        let   output      = '';
+
+        // DROP statements
+        if (this._ddl.optionEQvalue('Include Drops', 'yes'))
+            for (const node of descendants) {
+                const drop = this.generateDrop(node);
+                if (drop) output += drop;
+            }
+
+        // Row-key sequence
+        if (this._ddl.optionEQvalue('rowkey', true)) {
+            output += 'create sequence  row_key_seq;\n\n';
+        } else {
+            for (const root of forest) {
+                if (root.trimmedContent().toUpperCase().includes('/ROWKEY')) {
+                    output += 'create sequence  row_key_seq;\n\n';
+                    break;
+                }
+            }
+        }
+
+        // Tables
+        output += '-- create tables\n\n';
+        for (const root of forest)
+            output += this.generateDDL(root) + '\n';
+        for (const alter of this._ddl.postponedAlters)
+            output += alter + '\n';
+
+        // Translation tables
+        const hasTransCols = descendants.some(n => n.getTransColumns().length > 0);
+        if (hasTransCols) {
+            const char = this._ddl.semantics();
+            const p    = this._ddl.objPrefix();
+            output += '-- translation support\n\n';
+            output += `create table ${p}language (\n`;
+            output += `    code           varchar2(5${char}) not null\n`;
+            output += `                   constraint ${p}language_code_pk primary key,\n`;
+            output += `    locale         varchar2(28${char}) not null\n`;
+            output += `                   constraint ${p}language_locale_unq unique,\n`;
+            output += `    name           varchar2(1024${char}),\n`;
+            output += `    native_name    varchar2(1024${char})\n`;
+            output += `);\n\n`;
+            output += `create index ${p}language_i1 on ${p}language (locale);\n\n`;
+            for (const node of descendants) {
+                const t = this.generateTransTable(node);
+                if (t) output += t;
+            }
+        }
+
+        // Triggers
+        let j = 0;
+        for (const node of descendants) {
+            const trigger = this.generateTrigger(node);
+            if (trigger) { if (j++ === 0) output += '-- triggers\n'; output += trigger + '\n'; }
+        }
+        for (const node of descendants) {
+            const trigger = this.generateImmutableTrigger(node);
+            if (trigger) { if (j++ === 0) output += '-- immutable triggers\n'; output += trigger; }
+        }
+
+        // ORDS REST enable
+        for (const node of descendants) {
+            const ords = this.restEnable(node);
+            if (ords) output += ords + '\n';
+        }
+
+        // TAPI
+        j = 0;
+        for (const node of descendants) {
+            if (this._ddl.optionEQvalue('api', false) &&
+                !node.trimmedContent().toLowerCase().includes('/api'))
+                continue;
+            const tapi = this.generateTAPI(node);
+            if (tapi) { if (j++ === 0) output += '-- APIs\n'; output += tapi + '\n'; }
+        }
+
+        // Views
+        j = 0;
+        for (const root of forest) {
+            const view = this.generateView(root);
+            if (view) { if (j++ === 0) output += '-- create views\n'; output += view + '\n'; }
+        }
+        for (const node of descendants) {
+            const rv = this.generateResolvedView(node);
+            if (rv) { if (j++ === 0) output += '-- create views\n'; output += rv; }
+        }
+
+        // Table groups (TGROUP annotation)
+        const groups: Record<string, string[]> = {};
+        for (const node of descendants) {
+            if (node.inferType() !== 'table') continue;
+            const groupName = node.getAnnotationValue('TGROUP');
+            if (groupName != null) {
+                if (!groups[groupName]) groups[groupName] = [];
+                groups[groupName].push(this._ddl.objPrefix() + node.parseName());
+            }
+        }
+        const groupNames = Object.keys(groups);
+        if (groupNames.length > 0) {
+            output += '-- table groups\n';
+            for (const gn of groupNames) {
+                output += `insert into user_annotations_groups$ (group_name) values ('${gn}');\n`;
+                for (const member of groups[gn])
+                    output += `insert into user_annotations_group_members$ (group_name, object_name) values ('${gn}', '${member.toUpperCase()}');\n`;
+            }
+            output += '\n';
+        }
+
+        // AI enrichment (db >= 26)
+        const enrichDbVer = this._ddl.getOptionValue('db') as string | null;
+        if (this._ddl.optionEQvalue('aienrichment', true) &&
+            enrichDbVer != null && enrichDbVer.length >= 2 &&
+            (getMajorVersion(enrichDbVer) ?? 0) >= 26) {
+            const enrichCalls:  string[] = [];
+            const enrichGroups: Record<string, string[]> = {};
+            const prefix = this._ddl.objPrefix();
+
+            for (const node of forest) {
+                const type    = node.inferType();
+                const pairs   = node.getAnnotationPairs();
+                const objName = (prefix + node.parseName()).toUpperCase();
+
+                if (type === 'table') {
+                    for (const pair of pairs) {
+                        if (pair.label.toUpperCase() === 'TGROUP') {
+                            if (pair.value != null) {
+                                if (!enrichGroups[pair.value]) enrichGroups[pair.value] = [];
+                                enrichGroups[pair.value].push(objName);
+                            }
+                            continue;
+                        }
+                        if (pair.value == null) continue;
+                        enrichCalls.push(`    metadata_annotations.set('${pair.label}', '${pair.value}', '${objName}');`);
+                    }
+                    for (const col of node.children) {
+                        if (col.children.length > 0) continue;
+                        const colPairs = col.getAnnotationPairs();
+                        const colName  = objName + '.' + col.parseName().toUpperCase();
+                        for (const pair of colPairs) {
+                            if (pair.value == null) continue;
+                            enrichCalls.push(`    metadata_annotations.set('${pair.label}', '${pair.value}', '${colName}', 'TABLE COLUMN');`);
+                        }
+                    }
+                } else if (type === 'view') {
+                    for (const pair of pairs) {
+                        if (pair.value == null) continue;
+                        enrichCalls.push(`    metadata_annotations.set('${pair.label}', '${pair.value}', '${objName}', 'VIEW');`);
+                    }
+                }
+            }
+
+            for (const gn of Object.keys(enrichGroups)) {
+                enrichCalls.push(`    metadata_annotations.create_group('${gn}');`);
+                for (const member of enrichGroups[gn])
+                    enrichCalls.push(`    metadata_annotations.add_to_group('${gn}', '${member}', 'TABLE');`);
+            }
+
+            if (enrichCalls.length > 0)
+                output += '-- AI enrichment\nbegin\n' + enrichCalls.join('\n') + '\nend;\n/\n\n';
+        }
+
+        // Sample data
+        j = 0;
+        for (const root of forest) {
+            const data = this.generateData(root, this._ddl.data);
+            if (data) { if (j++ === 0) output += '-- load data\n\n'; output += data + '\n'; }
+        }
+
+        return output;
+    }
 }
 
 export default recognize;

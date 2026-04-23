@@ -5,7 +5,7 @@ import tree, { OracleDDLGenerator, DdlNode } from './tree.js';
 import lexer from './lexer.js';
 import json2qsql from './json2qsql.js';
 import errorMsgs from './errorMsgs.js';
-import { canonicalObjectName, getMajorVersion } from './naming.js';
+import { canonicalObjectName } from './naming.js';
 import type { DdlContext, IDdlNode, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
 export type { DdlContext, IDdlNode, ErdColumn, ErdItem, ErdLink, ErdOutput };
 
@@ -252,195 +252,26 @@ export class quicksql implements DdlContext {
 
     getDDL(): string {
         if (this._ddl != null) return this._ddl;
+        this._ddl = new OracleDDLGenerator(this).generateFullDDL() + this._makeFooter();
+        return this._ddl;
+    }
 
-        const gen         = new OracleDDLGenerator(this);
-        const descendants = this.descendants();
-        let   output      = '';
-
-        // DROP statements
-        if (this.optionEQvalue('Include Drops', 'yes'))
-            for (const node of descendants) {
-                const drop = gen.generateDrop(node) as string;
-                if (drop) output += drop;
-            }
-
-        // Row-key sequence
-        if (this.optionEQvalue('rowkey', true)) {
-            output += 'create sequence  row_key_seq;\n\n';
-        } else {
-            for (const root of this.forest) {
-                if (root.trimmedContent().toUpperCase().includes('/ROWKEY')) {
-                    output += 'create sequence  row_key_seq;\n\n';
-                    break;
-                }
-            }
-        }
-
-        // Tables
-        output += '-- create tables\n\n';
-        for (const root of this.forest)
-            output += (gen.generateDDL(root) as string) + '\n';
-        for (const alter of this.postponedAlters)
-            output += alter + '\n';
-
-        // Translation tables
-        const hasTransCols = descendants.some(n => n.getTransColumns().length > 0);
-        if (hasTransCols) {
-            const char = this.semantics();
-            const p    = this.objPrefix();
-            output += '-- translation support\n\n';
-            output += `create table ${p}language (\n`;
-            output += `    code           varchar2(5${char}) not null\n`;
-            output += `                   constraint ${p}language_code_pk primary key,\n`;
-            output += `    locale         varchar2(28${char}) not null\n`;
-            output += `                   constraint ${p}language_locale_unq unique,\n`;
-            output += `    name           varchar2(1024${char}),\n`;
-            output += `    native_name    varchar2(1024${char})\n`;
-            output += `);\n\n`;
-            output += `create index ${p}language_i1 on ${p}language (locale);\n\n`;
-            for (const node of descendants) {
-                const t = gen.generateTransTable(node) as string;
-                if (t) output += t;
-            }
-        }
-
-        // Triggers
-        let j = 0;
-        for (const node of descendants) {
-            const trigger = gen.generateTrigger(node) as string;
-            if (trigger) { if (j++ === 0) output += '-- triggers\n'; output += trigger + '\n'; }
-        }
-        for (const node of descendants) {
-            const trigger = gen.generateImmutableTrigger(node) as string;
-            if (trigger) { if (j++ === 0) output += '-- immutable triggers\n'; output += trigger; }
-        }
-
-        // ORDS REST enable
-        for (const node of descendants) {
-            const ords = gen.restEnable(node) as string;
-            if (ords) output += ords + '\n';
-        }
-
-        // TAPI
-        j = 0;
-        for (const node of descendants) {
-            if (this.optionEQvalue('api', false) &&
-                !node.trimmedContent().toLowerCase().includes('/api'))
-                continue;
-            const tapi = gen.generateTAPI(node) as string;
-            if (tapi) { if (j++ === 0) output += '-- APIs\n'; output += tapi + '\n'; }
-        }
-
-        // Views
-        j = 0;
-        for (const root of this.forest) {
-            const view = gen.generateView(root) as string;
-            if (view) { if (j++ === 0) output += '-- create views\n'; output += view + '\n'; }
-        }
-        for (const node of descendants) {
-            const rv = gen.generateResolvedView(node) as string;
-            if (rv) { if (j++ === 0) output += '-- create views\n'; output += rv; }
-        }
-
-        // Table groups (TGROUP annotation)
-        const groups: Record<string, string[]> = {};
-        for (const node of descendants) {
-            if (node.inferType() !== 'table') continue;
-            const groupName = node.getAnnotationValue('TGROUP') as string | null;
-            if (groupName != null) {
-                if (!groups[groupName]) groups[groupName] = [];
-                groups[groupName].push(this.objPrefix() + node.parseName());
-            }
-        }
-        const groupNames = Object.keys(groups);
-        if (groupNames.length > 0) {
-            output += '-- table groups\n';
-            for (const gn of groupNames) {
-                output += `insert into user_annotations_groups$ (group_name) values ('${gn}');\n`;
-                for (const member of groups[gn])
-                    output += `insert into user_annotations_group_members$ (group_name, object_name) values ('${gn}', '${member.toUpperCase()}');\n`;
-            }
-            output += '\n';
-        }
-
-        // AI enrichment (db >= 26)
-        const enrichDbVer = this.getOptionValue('db') as string | null;
-        if (this.optionEQvalue('aienrichment', true) &&
-            enrichDbVer != null && enrichDbVer.length >= 2 &&
-            (getMajorVersion(enrichDbVer) ?? 0) >= 26) {
-            const enrichCalls:  string[] = [];
-            const enrichGroups: Record<string, string[]> = {};
-            const prefix = this.objPrefix();
-
-            for (const node of this.forest) {
-                const type    = node.inferType();
-                const pairs   = node.getAnnotationPairs();
-                const objName = (prefix + node.parseName()).toUpperCase();
-
-                if (type === 'table') {
-                    for (const pair of pairs) {
-                        if (pair.label.toUpperCase() === 'TGROUP') {
-                            if (pair.value != null) {
-                                if (!enrichGroups[pair.value]) enrichGroups[pair.value] = [];
-                                enrichGroups[pair.value].push(objName);
-                            }
-                            continue;
-                        }
-                        if (pair.value == null) continue;
-                        enrichCalls.push(`    metadata_annotations.set('${pair.label}', '${pair.value}', '${objName}');`);
-                    }
-                    for (const col of node.children) {
-                        if (col.children.length > 0) continue;
-                        const colPairs  = col.getAnnotationPairs();
-                        const colName   = objName + '.' + col.parseName().toUpperCase();
-                        for (const pair of colPairs) {
-                            if (pair.value == null) continue;
-                            enrichCalls.push(`    metadata_annotations.set('${pair.label}', '${pair.value}', '${colName}', 'TABLE COLUMN');`);
-                        }
-                    }
-                } else if (type === 'view') {
-                    for (const pair of pairs) {
-                        if (pair.value == null) continue;
-                        enrichCalls.push(`    metadata_annotations.set('${pair.label}', '${pair.value}', '${objName}', 'VIEW');`);
-                    }
-                }
-            }
-
-            for (const gn of Object.keys(enrichGroups)) {
-                enrichCalls.push(`    metadata_annotations.create_group('${gn}');`);
-                for (const member of enrichGroups[gn])
-                    enrichCalls.push(`    metadata_annotations.add_to_group('${gn}', '${member}', 'TABLE');`);
-            }
-
-            if (enrichCalls.length > 0)
-                output += '-- AI enrichment\nbegin\n' + enrichCalls.join('\n') + '\nend;\n/\n\n';
-        }
-
-        // Sample data
-        j = 0;
-        for (const root of this.forest) {
-            const data = gen.generateData(root, this.data) as string;
-            if (data) { if (j++ === 0) output += '-- load data\n\n'; output += data + '\n'; }
-        }
-
-        // Footer
-        const inputWithoutComments = (fullInput: string) => fullInput
+    private _makeFooter(): string {
+        const inputWithoutComments = (s: string) => s
             .replace(/#.+/g, '\n')
             .replace(/\/\*/g, '--<--')
             .replace(/\*\//g, '-->--')
             .replace(/\/*\s*Non-default options:/g, '');
 
-        output += `-- Generated by Quick SQL ${this.version()} ${new Date().toLocaleString()}\n\n`;
-        output += '/*\n';
-        output += inputWithoutComments(this.input);
-        output += '\n';
+        let out = `-- Generated by Quick SQL ${this.version()} ${new Date().toLocaleString()}\n\n`;
+        out += '/*\n';
+        out += inputWithoutComments(this.input);
+        out += '\n';
         for (const u of this.unknownOptions())
-            output += '*** Unknown setting: ' + u + '\n';
-        output += '\n Non-default options:\n# settings = ' + JSON.stringify(this.nonDefaultOptions()) + '\n';
-        output += '\n*/';
-
-        this._ddl = output;
-        return output;
+            out += '*** Unknown setting: ' + u + '\n';
+        out += '\n Non-default options:\n# settings = ' + JSON.stringify(this.nonDefaultOptions()) + '\n';
+        out += '\n*/';
+        return out;
     }
 
     getErrors(): unknown[] {
