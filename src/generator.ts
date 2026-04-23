@@ -57,6 +57,41 @@ export class OracleDDLGenerator implements DDLGenerator {
         return 'not null';
     }
 
+    /** Constraint-line prefix — aligns 'constraint' keyword under the type column. */
+    private _cpad(colNode: IDdlNode): string {
+        return tab + tab + ' '.repeat(colNode.parent!.maxChildNameLen());
+    }
+
+    /**
+     * Resolve FK column Oracle DDL type from a referenced table's explicit PK.
+     * Returns null when the referenced table uses an auto-generated PK — in that
+     * case the caller should keep the FK column's own inferred type.
+     */
+    private _fkOracleType(refNode: IDdlNode): string | null {
+        const rname = refNode.getExplicitPkName();
+        if (rname === null || rname.includes(',')) return null;
+        const pkChild = refNode.findChild(rname);
+        return pkChild !== null ? this._toOracleType(pkChild._inferTypeFull()) : refNode.getPkType();
+    }
+
+    /**
+     * Resolve FK column PL/SQL parameter type from a referenced table's explicit PK.
+     * Returns null when the referenced table uses an auto-generated PK.
+     */
+    private _fkPlsqlType(refNode: IDdlNode): string | null {
+        const rname = refNode.getExplicitPkName();
+        if (rname === null || rname.includes(',')) return null;
+        const pkChild = refNode.findChild(rname);
+        return pkChild !== null ? pkChild.getPlsqlType() : refNode.getPkType();
+    }
+
+    /** Returns 'lower', 'upper', or '' based on node option. */
+    private _caseMethod(node: IDdlNode): string {
+        if (node.isOption('lower')) return 'lower';
+        if (node.isOption('upper')) return 'upper';
+        return '';
+    }
+
     _toOracleType(sem: SemanticType): string {
         const s     = this._ddl.semantics();
         const dbVer = this._ddl.getOptionValue('db') as string | null;
@@ -82,7 +117,7 @@ export class OracleDDLGenerator implements DDLGenerator {
     _buildColumnConstraints(node: IDdlNode, ret: string, sem: SemanticType): string {
         if (node.isOption('unique') || node.isOption('uk')) {
             ret += '\n';
-            ret += tab + tab + ' '.repeat(node.parent!.maxChildNameLen()) + 'constraint ' + concatNames(this._ddl.objPrefix(), sem.parent_child, this._naming.unq) + ' unique';
+            ret += this._cpad(node) + 'constraint ' + concatNames(this._ddl.objPrefix(), sem.parent_child, this._naming.unq) + ' unique';
         }
         let optQuote = "'";
         if (ret.startsWith('integer') || ret.startsWith('number') || ret.startsWith('date')) optQuote = '';
@@ -102,7 +137,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         if (node.isOption('hidden') || node.isOption('invincible')) ret += ' invisible';
         if (!sem.isNativeBoolean) ret += node.genConstraint(optQuote);
         if (sem.needsBoolCheck)
-            ret += '\n' + tab + tab + ' '.repeat(node.parent!.maxChildNameLen())
+            ret += '\n' + this._cpad(node)
                 + 'constraint ' + concatNames(this._ddl.objPrefix(), sem.parent_child)
                 + ` check (${node.parseName()} in ('Y','N'))`;
         if (node.isOption('between')) {
@@ -115,11 +150,11 @@ export class OracleDDLGenerator implements DDLGenerator {
                 ? ' ' + this._pkTypeModifier(this._ddl.objPrefix() + node.parent!.parseName())
                 : ' not null';
             ret += typeModifier + '\n';
-            ret += tab + tab + ' '.repeat(node.parent!.maxChildNameLen()) + 'constraint ' + concatNames(this._ddl.objPrefix(), sem.parent_child, this._naming.pk) + ' primary key';
+            ret += this._cpad(node) + 'constraint ' + concatNames(this._ddl.objPrefix(), sem.parent_child, this._naming.pk) + ' primary key';
         }
         if (node.annotations !== null) {
             if (0 <= ret.indexOf('\n'))
-                ret += '\n' + tab + tab + ' '.repeat(node.parent!.maxChildNameLen()) + 'annotations (' + node.annotations + ')';
+                ret += '\n' + this._cpad(node) + 'annotations (' + node.annotations + ')';
             else
                 ret += ' annotations (' + node.annotations + ')';
         }
@@ -174,12 +209,7 @@ export class OracleDDLGenerator implements DDLGenerator {
             let refNode = this._ddl.find(parent);
             let _id = '';
             if (refNode !== null) {
-                const rname = refNode.getExplicitPkName();
-                if (rname !== null && rname.indexOf(',') < 0) {
-                    const pkChild = refNode.findChild(rname);
-                    if (pkChild !== null) type = this._toOracleType(pkChild._inferTypeFull());
-                    else type = refNode.getPkType();
-                }
+                type = this._fkOracleType(refNode) ?? type;
             } else {
                 refNode = this._ddl.find(fk);
                 if (refNode?.isMany2One?.() && !fk.endsWith('_id')) {
@@ -759,10 +789,8 @@ export class OracleDDLGenerator implements DDLGenerator {
         if (node.hasRowKey()) { ret += '    :new.row_key := compress_int(row_key_seq.nextval);\n'; OK = true; }
         for (let i = 0; i < node.children.length; i++) {
             const child = node.children[i];
-            let method: string | null = null;
-            if (child.isOption('lower')) method = 'lower';
-            else if (child.isOption('upper')) method = 'upper';
-            if (method === null) continue;
+            const method = this._caseMethod(child);
+            if (method === '') continue;
             ret += '    :new.' + child.parseName().toLowerCase() + ' := ' + method + '(:new.' + child.parseName().toLowerCase() + ');\n';
             OK = true;
         }
@@ -807,10 +835,8 @@ export class OracleDDLGenerator implements DDLGenerator {
         const user = node.apexUser();
         for (let i = 0; i < node.children.length; i++) {
             const child  = node.children[i];
-            let method: string | null = null;
-            if (child.isOption('lower')) method = 'lower';
-            else if (child.isOption('upper')) method = 'upper';
-            if (method === null) continue;
+            const method = this._caseMethod(child);
+            if (method === '') continue;
             ret += '    :new.' + child.parseName().toLowerCase() + ' := ' + method + '(:new.' + child.parseName().toLowerCase() + ');\n';
         }
         if (hasRowVersion) ret += '    :new.row_version := nvl(:old.row_version, 0) + 1;\n';
@@ -849,10 +875,7 @@ export class OracleDDLGenerator implements DDLGenerator {
             const parent  = node.fks![fk];
             let type = 'integer';
             const refNode = this._ddl.find(parent);
-            if (refNode !== null && refNode.getExplicitPkName() !== null) {
-                const refPkChild = refNode.findChild(refNode.getExplicitPkName()!);
-                type = refPkChild ? refPkChild.getPlsqlType() : refNode.getPkType();
-            }
+            if (refNode !== null) type = this._fkPlsqlType(refNode) ?? type;
             ret += ',\n' + tab + tab + 'P_' + fk + '   ' + mode + '  ' + type + modifier;
         }
         for (const child of node.regularColumns())
@@ -1306,16 +1329,11 @@ export class OracleDDLGenerator implements DDLGenerator {
                     continue;
                 }
                 const attr    = node.findChild(fk);
-                let   type    = attr?.inferType() ?? 'number';
+                let   type    = attr ? attr.inferType() : 'number';
                 let   fkName  = fk;
                 const refNode = this._ddl.find(parent);
                 if (refNode != null) {
-                    const rname = refNode.getExplicitPkName();
-                    if (rname != null && !rname.includes(',')) {
-                        const pkChild = refNode.findChild(rname);
-                        if (pkChild != null) type = this._toOracleType(pkChild._inferTypeFull());
-                        else type = refNode.getPkType();
-                    }
+                    type = this._fkOracleType(refNode) ?? type;
                 } else {
                     const altRef = this._ddl.find(fk);
                     if (altRef?.isMany2One?.() && !fk.endsWith('_id'))
