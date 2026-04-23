@@ -681,6 +681,23 @@ export class DdlNode implements IDdlNode {
         return ret;
     }
 
+    getDefaultValue(): string | null {
+        if (!this.isOption('default')) return null;
+        let value = '';
+        for (let i = this.indexOf('default') + 1; i < this.src.length; i++) {
+            const token = this.src[i].getValue();
+            if (token === '/' || token === '-' || token === '[') break;
+            value += token;
+        }
+        return value;
+    }
+
+    getBetweenClause(): string | null {
+        if (!this.isOption('between')) return null;
+        const bi = this.indexOf('between');
+        return this.src[bi + 1].getValue() + ' and ' + this.src[bi + 3].getValue();
+    }
+
     parseValues(): (string | number)[] | null {
         if (this.isOption('check'))  return this.listValues('check') as (string | number)[];
         if (this.isOption('values')) return this.listValues('values') as (string | number)[];
@@ -784,8 +801,8 @@ export class DdlNode implements IDdlNode {
         return this.children.some(c => c.children.length > 0 && c.parseName() === name && !c.isArray());
     }
 
-    getTransColumns(): DdlNode[] {
-        const cols: DdlNode[] = [];
+    getTransColumns(): IDdlNode[] {
+        const cols: IDdlNode[] = [];
         for (let i = 0; i < this.children.length; i++) {
             const child = this.children[i];
             if (child.isOption('trans') || child.isOption('translation') || child.isOption('translations'))

@@ -5,7 +5,7 @@ import { LexerToken } from './lexer.js';
 import amend_reserved_word from './reserved_words.js';
 import split_str from './split_str.js';
 import { DdlNode, DEFAULT_NAMING, tab, EXPANDING_TYPES } from './node.js';
-import type { DdlContext, DDLGenerator, SemanticType, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
+import type { DdlContext, DDLGenerator, IDdlNode, SemanticType, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
 
 // ── Local constants ───────────────────────────────────────────────────────────
 
@@ -79,8 +79,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         }
     }
 
-    _buildColumnConstraints(node: DdlNode, ret: string, sem: SemanticType): string {
-        const src = node.src;
+    _buildColumnConstraints(node: IDdlNode, ret: string, sem: SemanticType): string {
         if (node.isOption('unique') || node.isOption('uk')) {
             ret += '\n';
             ret += tab + tab + ' '.repeat(node.parent!.maxChildNameLen()) + 'constraint ' + concatNames(this._ddl.objPrefix(), sem.parent_child, this._naming.unq) + ' unique';
@@ -88,12 +87,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         let optQuote = "'";
         if (ret.startsWith('integer') || ret.startsWith('number') || ret.startsWith('date')) optQuote = '';
         if (node.isOption('default')) {
-            let value = '';
-            for (let i = node.indexOf('default') + 1; i < src.length; i++) {
-                const token = src[i].getValue();
-                if (token === '/' || token === '-' || token === '[') break;
-                value += src[i].getValue();
-            }
+            const value = node.getDefaultValue() ?? '';
             const sqlDateExpressions = ['sysdate', 'current_date', 'current_timestamp', 'systimestamp', 'localtimestamp'];
             if (sem.isNativeBoolean) {
                 const boolVal = (value.toUpperCase() === 'Y' || value.toLowerCase() === 'true') ? 'true' : 'false';
@@ -112,8 +106,7 @@ export class OracleDDLGenerator implements DDLGenerator {
                 + 'constraint ' + concatNames(this._ddl.objPrefix(), sem.parent_child)
                 + ` check (${node.parseName()} in ('Y','N'))`;
         if (node.isOption('between')) {
-            const bi = node.indexOf('between');
-            const values = src[bi + 1].getValue() + ' and ' + src[bi + 3].getValue();
+            const values = node.getBetweenClause() ?? '';
             ret += ' constraint ' + concatNames(sem.parent_child, this._naming.bet) + '\n';
             ret += '           check (' + node.parseName() + ' between ' + values + ')';
         }
@@ -133,13 +126,13 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _genSequence(_node: DdlNode, objName: string): string {
+    _genSequence(_node: IDdlNode, objName: string): string {
         if (this._ddl.optionEQvalue('pk', 'SEQ') && this._ddl.optionEQvalue('genpk', true))
             return 'create sequence  ' + objName + '_seq;\n\n';
         return '';
     }
 
-    _genTableHeader(node: DdlNode, objName: string, immutableKeyword: string, idColName: string | null): string {
+    _genTableHeader(node: IDdlNode, objName: string, immutableKeyword: string, idColName: string | null): string {
         let ret = 'create ' + immutableKeyword + 'table ' + objName + ' (\n';
         const pad = tab + ' '.repeat(node.maxChildNameLen() - 'ID'.length);
         if (idColName !== null && !node.isOption('pk')) {
@@ -159,7 +152,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _genFkColumns(node: DdlNode, objName: string): string {
+    _genFkColumns(node: IDdlNode, objName: string): string {
         let ret = '';
         for (let fk in node.fks) {
             let parent = node.fks![fk];
@@ -226,7 +219,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _genRowKeyColumn(node: DdlNode, objName: string): string {
+    _genRowKeyColumn(node: IDdlNode, objName: string): string {
         if (!node.hasRowKey()) return '';
         const pad = tab + ' '.repeat(node.maxChildNameLen() - 'ROW_KEY'.length);
         let ret = tab + 'row_key' + pad + `varchar2(30${this._ddl.semantics()})\n`;
@@ -234,7 +227,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _genRegularColumns(node: DdlNode, _objName: string, idColName: string | null): string {
+    _genRegularColumns(node: IDdlNode, _objName: string, idColName: string | null): string {
         let ret = '';
         for (let i = 0; i < node.children.length; i++) {
             const child = node.children[i];
@@ -259,13 +252,13 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _genRowVersionColumn(node: DdlNode): string {
+    _genRowVersionColumn(node: IDdlNode): string {
         if (!node.hasRowVersion()) return '';
         const pad = tab + ' '.repeat(node.maxChildNameLen() - 'row_version'.length);
         return tab + 'row_version' + pad + 'integer not null,\n';
     }
 
-    _genAuditColumns(node: DdlNode): string {
+    _genAuditColumns(node: IDdlNode): string {
         if (!node.hasAuditCols()) return '';
         let auditDateType = String(this._ddl.getOptionValue('auditdate') || this._ddl.getOptionValue('Date Data Type') || '').toLowerCase();
         let ret = '';
@@ -280,7 +273,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _genAdditionalColumns(node: DdlNode): string {
+    _genAdditionalColumns(node: IDdlNode): string {
         let ret = '';
         const cols = this._ddl.additionalColumns();
         for (const col in cols) {
@@ -291,7 +284,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _genTableFooter(node: DdlNode, objName: string, immutableKeyword: string, _db23plus: boolean): string {
+    _genTableFooter(node: IDdlNode, objName: string, immutableKeyword: string, _db23plus: boolean): string {
         const tableAnnotations = node.annotations !== null ? '\nannotations (' + node.annotations + ')' : '';
         let compressClause = '';
         if (this._ddl.optionEQvalue('compress', 'yes') || node.isOption('compress'))
@@ -304,13 +297,13 @@ export class OracleDDLGenerator implements DDLGenerator {
             ret += 'audit all on ' + objName + ';\n\n';
         }
         if (node.isOption('flashback') || node.isOption('fda')) {
-            const archiveName = (node.getOptionValue('flashback') || node.getOptionValue('fda') || '').trim();
+            const archiveName = String(node.getOptionValue('flashback') || node.getOptionValue('fda') || '').trim();
             ret += 'alter table ' + objName + ' flashback archive' + (0 < archiveName.length ? ' ' + archiveName : '') + ';\n\n';
         }
         return ret;
     }
 
-    _genMultiColFkAlters(node: DdlNode, objName: string): string {
+    _genMultiColFkAlters(node: IDdlNode, objName: string): string {
         let ret = '';
         for (const fk in node.fks) {
             if (0 < fk.indexOf(',')) {
@@ -321,7 +314,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _genIndexes(node: DdlNode, objName: string, _db23plus: boolean): string {
+    _genIndexes(node: IDdlNode, objName: string, _db23plus: boolean): string {
         let ret = '';
         let num = 1;
         for (const fk in node.fks) {
@@ -365,7 +358,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _genComments(node: DdlNode, objName: string): string {
+    _genComments(node: IDdlNode, objName: string): string {
         let ret = '';
         const tableComment = node.getAnnotationValue('DESCRIPTION') || node.comment;
         if (tableComment !== null) ret += "comment on table " + objName + " is '" + tableComment + "';\n";
@@ -398,17 +391,16 @@ export class OracleDDLGenerator implements DDLGenerator {
         return false;
     }
 
-    parseType(node: DdlNode): string {
+    parseType(node: IDdlNode): string {
         if (node.children !== null && 0 < node.children.length) return 'table';
-        const src = node.src;
-        if (src[0].value === 'view' || (1 < src.length && src[1].value === '=')) return 'view';
-        if (src[0].value === 'dv') return 'dv';
+        const t = node.inferType();
+        if (t === 'view' || t === 'dv') return t;
         if (node.parent === null) return 'table';
         const sem = node._inferTypeFull();
         return this._buildColumnConstraints(node, this._toOracleType(sem), sem);
     }
 
-    generateTable(node: DdlNode): string {
+    generateTable(node: IDdlNode): string {
         if (node.children.length === 0 && 0 < node.apparentDepth()) {
             let pad = tab;
             if (node.parent !== undefined && node.parent !== null)
@@ -455,15 +447,15 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    generateDDL(node: DdlNode): string {
+    generateDDL(node: IDdlNode): string {
         if (node.inferType() === 'view' || node.inferType() === 'dv') return '';
-        const tables = this._orderedTableNodes(node);
+        const tables = this._orderedTableNodes(node as DdlNode);
         let ret = '';
         for (let i = 0; i < tables.length; i++) ret += this.generateTable(tables[i]);
         return ret;
     }
 
-    generateDrop(node: DdlNode): string {
+    generateDrop(node: IDdlNode): string {
         const objName = this._ddl.objPrefix() + node.parseName();
         const dbVer   = this._ddl.getOptionValue('db') as string | null;
         const ifExists = dbVer && dbVer.length > 0 && 23 <= (getMajorVersion(dbVer) ?? 0) ? 'if exists ' : '';
@@ -708,7 +700,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    restEnable(node: DdlNode): string {
+    restEnable(node: IDdlNode): string {
         if (node.inferType() !== 'table') return '';
         if (!node.isOption('rest')) return '';
         const name    = node.parseName();
@@ -719,13 +711,13 @@ export class OracleDDLGenerator implements DDLGenerator {
         return "begin\n" + tab + "ords.enable_object(p_enabled=>TRUE, p_object=>'" + objName + "');\nend;\n/\n";
     }
 
-    generateTrigger(node: DdlNode): string {
+    generateTrigger(node: IDdlNode): string {
         if (node.inferType() !== 'table') return '';
         if (node.isOption('soda')) return '';
         return this._generateBITrigger(node) + this._generateBUTrigger(node);
     }
 
-    _generateBITrigger(node: DdlNode): string {
+    _generateBITrigger(node: IDdlNode): string {
         const editionable = this._ddl.optionEQvalue('editionable', 'yes') ? ' editionable' : '';
         const objName     = (this._ddl.objPrefix() + node.parseName()).toLowerCase();
         let ret = `create or replace${editionable} trigger ${objName}${this._naming.bi}\n`;
@@ -768,8 +760,8 @@ export class OracleDDLGenerator implements DDLGenerator {
         for (let i = 0; i < node.children.length; i++) {
             const child = node.children[i];
             let method: string | null = null;
-            if (0 < child.content.indexOf('/lower')) method = 'lower';
-            else if (0 < child.content.indexOf('/upper')) method = 'upper';
+            if (child.isOption('lower')) method = 'lower';
+            else if (child.isOption('upper')) method = 'upper';
             if (method === null) continue;
             ret += '    :new.' + child.parseName().toLowerCase() + ' := ' + method + '(:new.' + child.parseName().toLowerCase() + ');\n';
             OK = true;
@@ -797,11 +789,11 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _generateBUTrigger(node: DdlNode): string {
+    _generateBUTrigger(node: IDdlNode): string {
         if (node.isOption('immutable')) return '';
         let hasLowerUpper = false;
         for (let i = 0; i < node.children.length; i++) {
-            if (0 < node.children[i].content.indexOf('/lower') || 0 < node.children[i].content.indexOf('/upper')) {
+            if (node.children[i].isOption('lower') || node.children[i].isOption('upper')) {
                 hasLowerUpper = true; break;
             }
         }
@@ -816,8 +808,8 @@ export class OracleDDLGenerator implements DDLGenerator {
         for (let i = 0; i < node.children.length; i++) {
             const child  = node.children[i];
             let method: string | null = null;
-            if (0 < child.content.indexOf('/lower')) method = 'lower';
-            else if (0 < child.content.indexOf('/upper')) method = 'upper';
+            if (child.isOption('lower')) method = 'lower';
+            else if (child.isOption('upper')) method = 'upper';
             if (method === null) continue;
             ret += '    :new.' + child.parseName().toLowerCase() + ' := ' + method + '(:new.' + child.parseName().toLowerCase() + ');\n';
         }
@@ -831,7 +823,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    generateImmutableTrigger(node: DdlNode): string {
+    generateImmutableTrigger(node: IDdlNode): string {
         if (node.inferType() !== 'table') return '';
         if (!node.isOption('immutable')) return '';
         const dbVer = this._ddl.getOptionValue('db') as string | null;
@@ -845,7 +837,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    procDecl(node: DdlNode, kind: string): string {
+    procDecl(node: IDdlNode, kind: string): string {
         const modifier = kind !== 'get' ? ' default null' : '';
         const mode     = kind !== 'get' ? ' in' : 'out';
         let ret = tab + 'procedure ' + kind + '_row (\n';
@@ -869,7 +861,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _getRowBody(node: DdlNode): string {
+    _getRowBody(node: IDdlNode): string {
         const idColName = node.getPkName();
         const objName   = this._ddl.objPrefix() + node.parseName();
         let ret = tab + 'is \n' + tab + 'begin \n';
@@ -892,7 +884,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _insertRowBody(node: DdlNode): string {
+    _insertRowBody(node: IDdlNode): string {
         const idColName = node.getPkName();
         const objName   = this._ddl.objPrefix() + node.parseName();
         let ret = tab + 'is \n' + tab + 'begin \n';
@@ -907,7 +899,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    _updateRowBody(node: DdlNode): string {
+    _updateRowBody(node: IDdlNode): string {
         const idColName = node.getPkName();
         const objName   = this._ddl.objPrefix() + node.parseName();
         let ret = tab + 'is \n' + tab + 'begin \n';
@@ -920,7 +912,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret;
     }
 
-    generateTAPI(node: DdlNode): string {
+    generateTAPI(node: IDdlNode): string {
         if (node.children.length === 0) return '';
         const objName   = this._ddl.objPrefix() + node.parseName();
         let ret = ('create or replace package ' + objName.toLowerCase() + '_API\nis\n\n').toLowerCase();
@@ -941,11 +933,11 @@ export class OracleDDLGenerator implements DDLGenerator {
         return ret.toLowerCase();
     }
 
-    generateData(node: DdlNode, dataObj: unknown): string {
+    generateData(node: IDdlNode, dataObj: unknown): string {
         resetSeed();
         if (this._ddl.optionEQvalue('inserts', false)) return '';
-        const tab2inserts = this.inserts4tbl(node, dataObj);
-        const tables      = this._orderedTableNodes(node);
+        const tab2inserts = this.inserts4tbl(node as DdlNode, dataObj);
+        const tables      = this._orderedTableNodes(node as DdlNode);
         let ret = '';
         for (let i = 0; i < tables.length; i++) {
             const objName = this._ddl.objPrefix() + tables[i].parseName();

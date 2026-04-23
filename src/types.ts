@@ -101,6 +101,35 @@ export interface IDdlNode {
     getAnnotationValue(key: string): string | null;
     getAnnotationPairs(): Array<{ label: string; value: string | null }>;
 
+    // Layout helpers (alignment of column definitions)
+    maxChildNameLen(): number;
+    apparentDepth():   number;
+
+    // Structural predicates (audit/rowkey/rowversion)
+    hasAuditCols():   boolean;
+    hasRowVersion():  boolean;
+    hasRowKey():      boolean;
+
+    // Node-level option query (different from DdlContext.getOptionValue — this reads the node's own inline options)
+    getOptionValue(key: string): string | number | boolean | null;
+
+    // Column properties (data)
+    annotations: string | null;
+    comment:     string | null;
+
+    // Column constraint helpers (for DDL generators)
+    genConstraint(optQuote?: string):  string;
+    getDefaultValue():                 string | null;
+    getBetweenClause():                string | null;
+
+    // Insert / sample data
+    parseValues(): (string | number)[] | null;
+
+    // Translation and APEX support (QSQL-level features)
+    getTransColumns():  IDdlNode[];
+    apexUser():         string;
+    auditSysDateFn():   string;
+
     // Classification
     isMany2One():  boolean;
     cardinality(): number;
