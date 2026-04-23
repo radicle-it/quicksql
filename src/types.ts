@@ -31,6 +31,51 @@ export interface ErdOutput {
     groups?: Record<string, string[]>;
 }
 
+// ── IDdlNode ──────────────────────────────────────────────────────────────────
+
+/**
+ * Public contract for a parsed QSQL node.
+ * Defined here (not in tree.ts) to break the circular-import problem:
+ * DdlContext references IDdlNode; DdlNode (in tree.ts) implements IDdlNode.
+ */
+export interface IDdlNode {
+    // Properties
+    line:     number;
+    parent:   IDdlNode | null;
+    children: IDdlNode[];
+    fks:      Record<string, string> | null;
+
+    // Identity
+    parseName():       string;
+    inferType():       string;
+    trimmedContent():  string;
+
+    // Option/directive inspection
+    isOption(token: string, token2?: string): boolean;
+    indexOf(token: string, isPrefix?: boolean): number;
+
+    // Tree navigation
+    findChild(name: string):  IDdlNode | null;
+    descendants():            IDdlNode[];
+    regularColumns():         IDdlNode[];
+
+    // PK / FK
+    getExplicitPkName(): string | null;
+    getPkName():         string | null;
+    getPkType():         string;
+    getGenIdColName():   string | null;
+    lateInitFks():       void;
+    refId():             string | null;
+
+    // Annotations
+    getAnnotationValue(key: string): string | null;
+    getAnnotationPairs(): Array<{ label: string; value: string | null }>;
+
+    // Classification
+    isMany2One():  boolean;
+    cardinality(): number;
+}
+
 // ── DdlContext ─────────────────────────────────────────────────────────────────
 
 /**
@@ -44,10 +89,11 @@ export interface DdlContext {
     optionEQvalue(key: string, value: unknown): boolean;
     objPrefix(withoutSchema?: string): string;
     semantics(): string;
-    find(name: string): any;                         // DdlNode — typed properly once tree.ts exists
+    find(name: string): IDdlNode | null;
+    descendants(): IDdlNode[];
     additionalColumns(): Record<string, string>;
     setOptions(line: string): void;
-    forest:             any[];                       // DdlNode[] — same
+    forest:             IDdlNode[];
     postponedAlters:    string[];
     postponedAltersSet: Set<string>;
     data?:              unknown;

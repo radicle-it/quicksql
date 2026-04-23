@@ -1,14 +1,13 @@
 /* globals __PACKAGE_VERSION__ */
 declare const __PACKAGE_VERSION__: string | undefined;
 
-import tree, { OracleDDLGenerator } from './tree.js';
+import tree, { OracleDDLGenerator, DdlNode } from './tree.js';
 import lexer from './lexer.js';
 import json2qsql from './json2qsql.js';
 import errorMsgs from './errorMsgs.js';
-import { singular, canonicalObjectName, getMajorVersion } from './naming.js';
-import split_str from './split_str.js';
-import type { DdlContext, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
-export type { DdlContext, ErdColumn, ErdItem, ErdLink, ErdOutput };
+import { canonicalObjectName, getMajorVersion } from './naming.js';
+import type { DdlContext, IDdlNode, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
+export type { DdlContext, IDdlNode, ErdColumn, ErdItem, ErdLink, ErdOutput };
 
 // ── PK / date-type canonical string constants ────────────────────────────────
 
@@ -91,13 +90,13 @@ export class quicksql implements DdlContext {
     // ── State ──
     input:              string;
     options:            OptionsRecord;
-    forest:             any[];          // ddlnode[] — TODO: type when tree.ts is migrated
+    forest:             DdlNode[];
     postponedAlters:    string[]      = [];
     postponedAltersSet: Set<string>   = new Set();
     data?:              unknown;       // optional pre-loaded data object for generateData()
 
     private _labelToKey: Record<string, string> = {};
-    name2node:           Record<string, any> | null = null;
+    name2node:           Record<string, DdlNode> | null = null;
 
     constructor(fullInput: string, options?: unknown) {
         this.options = JSON.parse(JSON.stringify(defaultOptions)) as OptionsRecord;
@@ -117,7 +116,7 @@ export class quicksql implements DdlContext {
             prefix = '# settings = ' + String(options) + '\n\n';
 
         this.input  = prefix + fullInput;
-        this.forest = tree(this) as any[];
+        this.forest = tree(this) as DdlNode[];
     }
 
     // ── Option access ─────────────────────────────────────────────────────────
@@ -211,22 +210,22 @@ export class quicksql implements DdlContext {
 
     // ── Node lookup ───────────────────────────────────────────────────────────
 
-    find(name: string): any {
+    find(name: string): DdlNode | null {
         if (this.name2node != null)
             return this.name2node[canonicalObjectName(name) as string] ?? null;
 
         this.name2node = {};
         for (const root of this.forest) {
-            for (const node of (root.descendants() as any[]))
+            for (const node of root.descendants())
                 this.name2node[node.parseName()] = node;
         }
         return this.name2node[canonicalObjectName(name) as string] ?? null;
     }
 
-    descendants(): any[] {
-        const ret: any[] = [];
+    descendants(): DdlNode[] {
+        const ret: DdlNode[] = [];
         for (const root of this.forest)
-            ret.push(...(root.descendants() as any[]));
+            ret.push(...root.descendants());
         return ret;
     }
 
@@ -247,138 +246,14 @@ export class quicksql implements DdlContext {
 
     getERD(): ErdOutput {
         if (this._erd != null) return this._erd;
-
-        const gen         = new OracleDDLGenerator(this as any);
-        const descendants = this.descendants();
-        const output: ErdOutput = { items: [], links: [] };
-
-        for (const node of descendants) {
-            if (node.inferType() !== 'table') continue;
-
-            const item: ErdItem = {
-                name:    this.objPrefix('no schema') + node.parseName(''),
-                schema:  (this.getOptionValue('schema') as string) || null,
-                columns: [],
-            };
-            output.items.push(item);
-
-            // PK column
-            const idColName = node.getGenIdColName();
-            if (idColName != null && !node.isOption('pk')) {
-                item.columns.push({ name: idColName, datatype: 'number' });
-            } else {
-                const pkName = node.getExplicitPkName();
-                if (pkName != null && !pkName.includes(',')) {
-                    const child = node.findChild(pkName);
-                    item.columns.push({ name: pkName, datatype: child?.inferType() ?? 'number' });
-                }
-            }
-
-            // FK columns
-            node.lateInitFks();
-            for (const fk in node.fks) {
-                const parent: string = node.fks[fk];
-                if (fk.includes(',')) {
-                    const refNode = this.find(parent);
-                    const chunks  = split_str(fk, ', ');
-                    for (const col of chunks) {
-                        if (col === ',') continue;
-                        const pChild = refNode?.findChild(col);
-                        item.columns.push({ name: col, datatype: pChild?.inferType() ?? 'number' });
-                    }
-                    continue;
-                }
-                const attr    = node.findChild(fk);
-                let   type    = attr?.inferType() ?? 'number';
-                let   fkName  = fk;
-                const refNode = this.find(parent);
-                if (refNode != null) {
-                    const rname = refNode.getExplicitPkName();
-                    if (rname != null && !rname.includes(',')) type = refNode.getPkType();
-                } else {
-                    const altRef = this.find(fk);
-                    if (altRef?.isMany2One?.() && !fk.endsWith('_id'))
-                        fkName = (singular(fk) ?? fk) + '_id';
-                }
-                item.columns.push({ name: fkName, datatype: type });
-            }
-
-            // Regular columns
-            const explicitPk = node.getExplicitPkName();
-            for (const child of node.children) {
-                if (child.inferType() === 'table') continue;
-                if (child.refId()     != null)     continue;
-                if (child.parseName() === explicitPk) continue;
-                item.columns.push({ name: child.parseName(''), datatype: child.inferType() });
-                if (child.indexOf('file') > 0) {
-                    const col = child.parseName();
-                    item.columns.push({ name: col + '_filename', datatype: 'varchar2(255' + this.semantics() + ')' });
-                    item.columns.push({ name: col + '_mimetype', datatype: 'varchar2(255' + this.semantics() + ')' });
-                    item.columns.push({ name: col + '_charset',  datatype: 'varchar2(255' + this.semantics() + ')' });
-                    item.columns.push({ name: col + '_lastupd',  datatype: 'date' });
-                }
-            }
-
-            // Row meta-columns
-            const nodeContent = node.trimmedContent().toUpperCase() as string;
-            if (this.optionEQvalue('rowkey', true) || nodeContent.includes('/ROWKEY'))
-                item.columns.push({ name: 'row_key', datatype: 'varchar2(30' + this.semantics() + ')' });
-            if (this.optionEQvalue('rowVersion', 'yes') || nodeContent.includes('/ROWVERSION'))
-                item.columns.push({ name: 'row_version', datatype: 'integer' });
-            if (this.optionEQvalue('Audit Columns', 'yes') || nodeContent.includes('/AUDITCOLS')) {
-                let auditType = (this.getOptionValue('auditdate') as string | null) || '';
-                if (!auditType) auditType = this.getOptionValue('Date Data Type') as string;
-                auditType = auditType.toLowerCase();
-                const char = this.semantics();
-                item.columns.push({ name: this.getOptionValue('createdcol')   as string, datatype: auditType });
-                item.columns.push({ name: this.getOptionValue('createdbycol') as string, datatype: 'varchar2(255' + char + ')' });
-                item.columns.push({ name: this.getOptionValue('updatedcol')   as string, datatype: auditType });
-                item.columns.push({ name: this.getOptionValue('updatedbycol') as string, datatype: 'varchar2(255' + char + ')' });
-            }
-        }
-
-        // Links
-        for (const node of descendants) {
-            if (node.inferType() !== 'table') continue;
-            gen.generateDDL(node);  // populates fks as side-effect
-            for (const fk in node.fks) {
-                const parent = node.fks[fk];
-                const pkNode = this.find(parent);
-                if (pkNode == null) continue;
-                const pk      = pkNode.getExplicitPkName() ?? 'id';
-                const fkAttr  = node.findChild(fk);
-                const mandatory = fkAttr == null || fkAttr.isOption('nn') || fkAttr.isOption('notnull');
-                const link: ErdLink = {
-                    source:    this.objPrefix() + parent,
-                    source_id: pk,
-                    target:    this.objPrefix() + node.parseName(''),
-                    target_id: fk,
-                };
-                if (mandatory) link.mandatory = mandatory;
-                output.links.push(link);
-            }
-        }
-
-        // Groups (only include when non-empty)
-        const groups: Record<string, string[]> = {};
-        for (const node of descendants) {
-            if (node.inferType() !== 'table') continue;
-            const groupName = node.getAnnotationValue('TGROUP') as string | null;
-            if (groupName != null) {
-                if (!groups[groupName]) groups[groupName] = [];
-                groups[groupName].push(this.objPrefix('no schema') + node.parseName(''));
-            }
-        }
-        if (Object.keys(groups).length > 0) output.groups = groups;
-
-        this._erd = output;
-        return output;
+        this._erd = new OracleDDLGenerator(this).generateERD();
+        return this._erd;
     }
 
     getDDL(): string {
         if (this._ddl != null) return this._ddl;
 
-        const gen         = new OracleDDLGenerator(this as any);
+        const gen         = new OracleDDLGenerator(this);
         const descendants = this.descendants();
         let   output      = '';
 
@@ -394,7 +269,7 @@ export class quicksql implements DdlContext {
             output += 'create sequence  row_key_seq;\n\n';
         } else {
             for (const root of this.forest) {
-                if ((root.trimmedContent() as string).toUpperCase().includes('/ROWKEY')) {
+                if (root.trimmedContent().toUpperCase().includes('/ROWKEY')) {
                     output += 'create sequence  row_key_seq;\n\n';
                     break;
                 }
@@ -409,9 +284,7 @@ export class quicksql implements DdlContext {
             output += alter + '\n';
 
         // Translation tables
-        const hasTransCols = descendants.some(
-            (n: any) => n.getTransColumns && n.getTransColumns().length > 0
-        );
+        const hasTransCols = descendants.some(n => n.getTransColumns().length > 0);
         if (hasTransCols) {
             const char = this.semantics();
             const p    = this.objPrefix();
@@ -452,7 +325,7 @@ export class quicksql implements DdlContext {
         j = 0;
         for (const node of descendants) {
             if (this.optionEQvalue('api', false) &&
-                !(node.trimmedContent() as string).toLowerCase().includes('/api'))
+                !node.trimmedContent().toLowerCase().includes('/api'))
                 continue;
             const tapi = gen.generateTAPI(node) as string;
             if (tapi) { if (j++ === 0) output += '-- APIs\n'; output += tapi + '\n'; }
@@ -500,9 +373,9 @@ export class quicksql implements DdlContext {
             const prefix = this.objPrefix();
 
             for (const node of this.forest) {
-                const type    = node.inferType() as string;
-                const pairs   = node.getAnnotationPairs() as Array<{ label: string; value: string | null }>;
-                const objName = (prefix + (node.parseName() as string)).toUpperCase();
+                const type    = node.inferType();
+                const pairs   = node.getAnnotationPairs();
+                const objName = (prefix + node.parseName()).toUpperCase();
 
                 if (type === 'table') {
                     for (const pair of pairs) {
@@ -516,10 +389,10 @@ export class quicksql implements DdlContext {
                         if (pair.value == null) continue;
                         enrichCalls.push(`    metadata_annotations.set('${pair.label}', '${pair.value}', '${objName}');`);
                     }
-                    for (const col of node.children as any[]) {
+                    for (const col of node.children) {
                         if (col.children.length > 0) continue;
-                        const colPairs  = col.getAnnotationPairs() as Array<{ label: string; value: string | null }>;
-                        const colName   = objName + '.' + (col.parseName() as string).toUpperCase();
+                        const colPairs  = col.getAnnotationPairs();
+                        const colName   = objName + '.' + col.parseName().toUpperCase();
                         for (const pair of colPairs) {
                             if (pair.value == null) continue;
                             enrichCalls.push(`    metadata_annotations.set('${pair.label}', '${pair.value}', '${colName}', 'TABLE COLUMN');`);
