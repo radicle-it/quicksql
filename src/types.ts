@@ -31,6 +31,34 @@ export interface ErdOutput {
     groups?: Record<string, string[]>;
 }
 
+// ── SemanticType ──────────────────────────────────────────────────────────────
+
+/**
+ * Database-agnostic description of a parsed QSQL column's type.
+ * DdlNode._inferTypeFull() returns this; DDL generators translate it to
+ * dialect-specific SQL.
+ */
+export interface SemanticType {
+    /** Abstract base, e.g. 'varchar' | 'number' | 'integer' | 'date' |
+     *  'timestamp' | 'tswtz' | 'tswltz' | 'clob' | 'blob' | 'boolean' |
+     *  'geometry' | 'json' | 'vector' | <domain-name> */
+    base:            string;
+    /** parseName() of this column — generators need it for inline constraints. */
+    colName:         string;
+    /** Character length for 'varchar' base. */
+    varcharLen?:     number;
+    /** Parenthesized precision/scale for 'number', e.g. "(10,2)". */
+    numericSpec?:    string;
+    /** Full parenthesized dimension for 'vector', e.g. "(128,*,*)". */
+    vectorSpec?:     string;
+    /** Emit check (col in ('Y','N')) constraint. */
+    needsBoolCheck:  boolean;
+    /** Emit as native SQL BOOLEAN keyword (no check constraint). */
+    isNativeBoolean: boolean;
+    /** "<table>_<col>" string for constraint naming. */
+    parent_child:    string;
+}
+
 // ── IDdlNode ──────────────────────────────────────────────────────────────────
 
 /**
@@ -49,6 +77,8 @@ export interface IDdlNode {
     parseName():       string;
     inferType():       string;
     trimmedContent():  string;
+    _inferTypeFull():  SemanticType;
+    getPlsqlType():    string;
 
     // Option/directive inspection
     isOption(token: string, token2?: string): boolean;

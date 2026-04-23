@@ -5,7 +5,7 @@ import { LexerToken } from './lexer.js';
 import amend_reserved_word from './reserved_words.js';
 import split_str from './split_str.js';
 import { DdlNode, DEFAULT_NAMING, tab, EXPANDING_TYPES } from './node.js';
-import type { DdlContext, DDLGenerator, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
+import type { DdlContext, DDLGenerator, SemanticType, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
 
 // ── Local constants ───────────────────────────────────────────────────────────
 
@@ -57,11 +57,33 @@ export class OracleDDLGenerator implements DDLGenerator {
         return 'not null';
     }
 
-    _buildColumnConstraints(node: DdlNode, ret: string, booleanCheck: string, isNativeBoolean: boolean, parent_child: string): string {
+    _toOracleType(sem: SemanticType): string {
+        const s     = this._ddl.semantics();
+        const dbVer = this._ddl.getOptionValue('db') as string | null;
+        const db23  = dbVer != null && dbVer.length > 0 && 23 <= (getMajorVersion(dbVer) ?? 0);
+        switch (sem.base) {
+            case 'varchar':   return `varchar2(${sem.varcharLen ?? 4000}${s})`;
+            case 'number':    return sem.numericSpec ? `number${sem.numericSpec}` : 'number';
+            case 'integer':   return 'integer';
+            case 'date':      return 'date';
+            case 'timestamp': return 'timestamp';
+            case 'tswtz':     return 'timestamp with time zone';
+            case 'tswltz':    return 'timestamp with local time zone';
+            case 'clob':      return 'clob';
+            case 'blob':      return 'blob';
+            case 'boolean':   return 'boolean';
+            case 'geometry':  return 'sdo_geometry';
+            case 'json':      return db23 ? 'json' : `clob check (${sem.colName} is json)`;
+            case 'vector':    return `vector${sem.vectorSpec ?? '(*,*,*)'}`;
+            default:          return sem.base;
+        }
+    }
+
+    _buildColumnConstraints(node: DdlNode, ret: string, sem: SemanticType): string {
         const src = node.src;
         if (node.isOption('unique') || node.isOption('uk')) {
             ret += '\n';
-            ret += tab + tab + ' '.repeat(node.parent!.maxChildNameLen()) + 'constraint ' + concatNames(this._ddl.objPrefix(), parent_child, this._naming.unq) + ' unique';
+            ret += tab + tab + ' '.repeat(node.parent!.maxChildNameLen()) + 'constraint ' + concatNames(this._ddl.objPrefix(), sem.parent_child, this._naming.unq) + ' unique';
         }
         let optQuote = "'";
         if (ret.startsWith('integer') || ret.startsWith('number') || ret.startsWith('date')) optQuote = '';
@@ -73,7 +95,7 @@ export class OracleDDLGenerator implements DDLGenerator {
                 value += src[i].getValue();
             }
             const sqlDateExpressions = ['sysdate', 'current_date', 'current_timestamp', 'systimestamp', 'localtimestamp'];
-            if (isNativeBoolean) {
+            if (sem.isNativeBoolean) {
                 const boolVal = (value.toUpperCase() === 'Y' || value.toLowerCase() === 'true') ? 'true' : 'false';
                 ret += ' default on null ' + boolVal;
             } else if (sqlDateExpressions.includes(value.toLowerCase()))
@@ -84,12 +106,15 @@ export class OracleDDLGenerator implements DDLGenerator {
         if (node.isOption('nn') || node.indexOf('not') + 1 === node.indexOf('null'))
             if (node.indexOf('pk') < 0) ret += ' not null';
         if (node.isOption('hidden') || node.isOption('invincible')) ret += ' invisible';
-        if (!isNativeBoolean) ret += node.genConstraint(optQuote);
-        ret += booleanCheck;
+        if (!sem.isNativeBoolean) ret += node.genConstraint(optQuote);
+        if (sem.needsBoolCheck)
+            ret += '\n' + tab + tab + ' '.repeat(node.parent!.maxChildNameLen())
+                + 'constraint ' + concatNames(this._ddl.objPrefix(), sem.parent_child)
+                + ` check (${node.parseName()} in ('Y','N'))`;
         if (node.isOption('between')) {
             const bi = node.indexOf('between');
             const values = src[bi + 1].getValue() + ' and ' + src[bi + 3].getValue();
-            ret += ' constraint ' + concatNames(parent_child, this._naming.bet) + '\n';
+            ret += ' constraint ' + concatNames(sem.parent_child, this._naming.bet) + '\n';
             ret += '           check (' + node.parseName() + ' between ' + values + ')';
         }
         if (node.isOption('pk')) {
@@ -97,7 +122,7 @@ export class OracleDDLGenerator implements DDLGenerator {
                 ? ' ' + this._pkTypeModifier(this._ddl.objPrefix() + node.parent!.parseName())
                 : ' not null';
             ret += typeModifier + '\n';
-            ret += tab + tab + ' '.repeat(node.parent!.maxChildNameLen()) + 'constraint ' + concatNames(this._ddl.objPrefix(), parent_child, this._naming.pk) + ' primary key';
+            ret += tab + tab + ' '.repeat(node.parent!.maxChildNameLen()) + 'constraint ' + concatNames(this._ddl.objPrefix(), sem.parent_child, this._naming.pk) + ' primary key';
         }
         if (node.annotations !== null) {
             if (0 <= ret.indexOf('\n'))
@@ -146,7 +171,7 @@ export class OracleDDLGenerator implements DDLGenerator {
                     if (col === ',') continue;
                     const pChild = refNode?.findChild(col);
                     const colPad = tab + ' '.repeat(node.maxChildNameLen() - col.length);
-                    ret += tab + col + colPad + (pChild?.inferType() ?? 'number') + ',\n';
+                    ret += tab + col + colPad + (pChild ? this._toOracleType(pChild._inferTypeFull()) : 'number') + ',\n';
                 }
                 continue;
             }
@@ -157,7 +182,11 @@ export class OracleDDLGenerator implements DDLGenerator {
             let _id = '';
             if (refNode !== null) {
                 const rname = refNode.getExplicitPkName();
-                if (rname !== null && rname.indexOf(',') < 0) type = refNode.getPkType();
+                if (rname !== null && rname.indexOf(',') < 0) {
+                    const pkChild = refNode.findChild(rname);
+                    if (pkChild !== null) type = this._toOracleType(pkChild._inferTypeFull());
+                    else type = refNode.getPkType();
+                }
             } else {
                 refNode = this._ddl.find(fk);
                 if (refNode?.isMany2One?.() && !fk.endsWith('_id')) {
@@ -319,7 +348,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         if (_db23plus) {
             for (let i = 0; i < node.children.length; i++) {
                 const child = node.children[i];
-                if (child.children.length === 0 && child.inferType().startsWith('vector')) {
+                if (child.children.length === 0 && child.inferType() === 'vector') {
                     ret += 'create vector index ' + objName + '_vi' + (num++) + ' on ' + objName + ' (' + child.parseName() + ')\n';
                     ret += '    organization neighbor partitions\n';
                     ret += '    with distance cosine;\n\n';
@@ -328,7 +357,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         }
         for (let i = 0; i < node.children.length; i++) {
             const child = node.children[i];
-            if (child.children.length === 0 && child.inferType() === 'sdo_geometry') {
+            if (child.children.length === 0 && child.inferType() === 'geometry') {
                 ret += 'create index ' + objName + '_si' + (num++) + ' on ' + objName + ' (' + child.parseName() + ')\n';
                 ret += '    indextype is mdsys.spatial_index_v2;\n\n';
             }
@@ -375,8 +404,8 @@ export class OracleDDLGenerator implements DDLGenerator {
         if (src[0].value === 'view' || (1 < src.length && src[1].value === '=')) return 'view';
         if (src[0].value === 'dv') return 'dv';
         if (node.parent === null) return 'table';
-        const { type, booleanCheck, isNativeBoolean, parent_child } = node._inferTypeFull();
-        return this._buildColumnConstraints(node, type, booleanCheck, isNativeBoolean, parent_child);
+        const sem = node._inferTypeFull();
+        return this._buildColumnConstraints(node, this._toOracleType(sem), sem);
     }
 
     generateTable(node: DdlNode): string {
@@ -821,12 +850,17 @@ export class OracleDDLGenerator implements DDLGenerator {
         const mode     = kind !== 'get' ? ' in' : 'out';
         let ret = tab + 'procedure ' + kind + '_row (\n';
         const idColName = node.getPkName();
-        ret += tab + tab + 'p_' + idColName + '        in  ' + node.getPkType() + modifier;
+        const pkChild = node.getGenIdColName() !== null ? null : node.findChild(node.getExplicitPkName()!);
+        const pkPlsqlType = pkChild ? pkChild.getPlsqlType() : node.getPkType();
+        ret += tab + tab + 'p_' + idColName + '        in  ' + pkPlsqlType + modifier;
         for (const fk in node.fks) {
             const parent  = node.fks![fk];
             let type = 'integer';
             const refNode = this._ddl.find(parent);
-            if (refNode !== null && refNode.getExplicitPkName() !== null) type = refNode.getPkType();
+            if (refNode !== null && refNode.getExplicitPkName() !== null) {
+                const refPkChild = refNode.findChild(refNode.getExplicitPkName()!);
+                type = refPkChild ? refPkChild.getPlsqlType() : refNode.getPkType();
+            }
             ret += ',\n' + tab + tab + 'P_' + fk + '   ' + mode + '  ' + type + modifier;
         }
         for (const child of node.regularColumns())
@@ -1007,7 +1041,7 @@ export class OracleDDLGenerator implements DDLGenerator {
                 const v = (elem as Record<string, unknown>)[cname];
                 if (v !== null && v !== undefined) values = [v as string];
             }
-            const datum = generateSample(objName, cname, child.inferType(), values);
+            const datum = generateSample(objName, cname, this._toOracleType(child._inferTypeFull()), values);
             insert += tab + String(translate(String(this._ddl.getOptionValue('Data Language') ?? 'EN'), datum)) + ',\n';
         }
         insert = trimTrailingComma(insert);
@@ -1170,7 +1204,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         for (let i = 0; i < transCols.length; i++) {
             const colName = 'trans_' + transCols[i].parseName();
             pad = tab + ' '.repeat(maxLen - colName.length);
-            const baseType = transCols[i].getBaseType();
+            const baseType = this._toOracleType(transCols[i]._inferTypeFull());
             ret += tab + colName + pad + baseType + ',\n';
         }
         ret += tab + 'constraint ' + transName + this._naming.uk + ' unique (' + fkColName + ', language_code)\n';
@@ -1261,7 +1295,7 @@ export class OracleDDLGenerator implements DDLGenerator {
                 const pkName = node.getExplicitPkName();
                 if (pkName != null && !pkName.includes(',')) {
                     const child = node.findChild(pkName);
-                    item.columns.push({ name: pkName, datatype: child?.inferType() ?? 'number' });
+                    item.columns.push({ name: pkName, datatype: child ? this._toOracleType(child._inferTypeFull()) : 'number' });
                 }
             }
 
@@ -1275,7 +1309,7 @@ export class OracleDDLGenerator implements DDLGenerator {
                     for (const col of chunks) {
                         if (col === ',') continue;
                         const pChild = refNode?.findChild(col);
-                        item.columns.push({ name: col, datatype: pChild?.inferType() ?? 'number' } as ErdColumn);
+                        item.columns.push({ name: col, datatype: pChild ? this._toOracleType(pChild._inferTypeFull()) : 'number' } as ErdColumn);
                     }
                     continue;
                 }
@@ -1285,7 +1319,11 @@ export class OracleDDLGenerator implements DDLGenerator {
                 const refNode = this._ddl.find(parent);
                 if (refNode != null) {
                     const rname = refNode.getExplicitPkName();
-                    if (rname != null && !rname.includes(',')) type = refNode.getPkType();
+                    if (rname != null && !rname.includes(',')) {
+                        const pkChild = refNode.findChild(rname);
+                        if (pkChild != null) type = this._toOracleType(pkChild._inferTypeFull());
+                        else type = refNode.getPkType();
+                    }
                 } else {
                     const altRef = this._ddl.find(fk);
                     if (altRef?.isMany2One?.() && !fk.endsWith('_id'))
@@ -1300,7 +1338,7 @@ export class OracleDDLGenerator implements DDLGenerator {
                 if (child.inferType() === 'table') continue;
                 if (child.refId()     != null)     continue;
                 if (child.parseName() === explicitPk) continue;
-                item.columns.push({ name: child.parseName(), datatype: child.inferType() });
+                item.columns.push({ name: child.parseName(), datatype: this._toOracleType(child._inferTypeFull()) });
                 if (child.indexOf('file') > 0) {
                     const col = child.parseName();
                     item.columns.push({ name: col + '_filename', datatype: 'varchar2(255' + this._ddl.semantics() + ')' });

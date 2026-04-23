@@ -1,7 +1,7 @@
 import { singular, concatNames, canonicalObjectName, getMajorVersion } from './naming.js';
 import lexer, { LexerToken } from './lexer.js';
 import amend_reserved_word from './reserved_words.js';
-import type { DdlContext, IDdlNode } from './types.js';
+import type { DdlContext, IDdlNode, SemanticType } from './types.js';
 
 // ── Pre-computed lowercase constants (used only in DdlNode) ──────────────────
 
@@ -85,15 +85,6 @@ function _nameImpliesDate(colName: string, src: LexerToken[], datePos: number): 
     if (colName.startsWith('updated')) return true;
     if (1 < src.length && src[1].value === 'd') return true;
     return false;
-}
-
-// ── Internal type for _inferTypeFull result ───────────────────────────────────
-
-interface InferTypeResult {
-    type:            string;
-    booleanCheck:    string;
-    isNativeBoolean: boolean;
-    parent_child:    string;
 }
 
 // ── DdlNode class ─────────────────────────────────────────────────────────────
@@ -376,93 +367,101 @@ export class DdlNode implements IDdlNode {
         return this.sugarcoatName(nameFrom, nameTo);
     }
 
-    _inferTypeFull(): InferTypeResult {
+    _inferTypeFull(): SemanticType {
         const src     = this.src;
         const colName = src[0].value;
 
-        // Phase 1: varchar2 base length
-        let len: number = (colName.endsWith('_name') || colName.startsWith('name') || colName.startsWith('email'))
+        // Phase 1: varchar base length
+        let varcharLen: number = (colName.endsWith('_name') || colName.startsWith('name') || colName.startsWith('email'))
             ? (this._ctx.getOptionValue('namelen') as number) || 255
             : 4000;
         const vcPos = this.indexOf('vc', true);
         if (0 < vcPos) {
-            let varcharLen = src[vcPos].value.substring('vc'.length);
-            if (varcharLen === '') {
+            let vcArg = src[vcPos].value.substring('vc'.length);
+            if (vcArg === '') {
                 const oParenPos = this.indexOf('(');
-                if (oParenPos === vcPos + 1) varcharLen = src[vcPos + 2].value;
+                if (oParenPos === vcPos + 1) vcArg = src[vcPos + 2].value;
             }
-            len = _resolveVarcharLen(src, vcPos, varcharLen !== '' ? parseInt(varcharLen) : len);
+            varcharLen = _resolveVarcharLen(src, vcPos, vcArg !== '' ? parseInt(vcArg) : varcharLen);
         }
-        let ret = `varchar2(${len}${this._ctx.semantics()})`;
+        let base = 'varchar';
 
         // Phase 2: numeric by column name convention
         const datePos  = this.indexOf('date');
         if (this._slashPos === undefined) this._slashPos = this.indexOf('/');
         const slashPos = this._slashPos;
         if (_nameImpliesNumeric(colName, src, vcPos, datePos, slashPos, this.indexOf('pk')))
-            ret = 'number';
+            base = 'number';
 
         // Phase 3: explicit keyword overrides
-        if (this.occursBeforeOption('int', true)) ret = 'integer';
-        if (0 < vcPos) ret = `varchar2(${len}${this._ctx.semantics()})`;
+        if (this.occursBeforeOption('int', true)) base = 'integer';
+        if (0 < vcPos) base = 'varchar';
+        let vectorSpec: string | undefined;
         const vector = this.vectorType('vector') || this.vectorType('vect');
-        if (vector !== null) ret = vector;
+        if (vector !== null) {
+            base      = 'vector';
+            vectorSpec = vector.substring('vector'.length);  // e.g. "(128,*,*)"
+        }
 
         // Phase 4: boolean
-        const parent      = this.parent!;
+        const parent       = this.parent!;
         const parent_child = concatNames(parent.parseName(), '_', this.parseName());
-        let booleanCheck  = '';
+        let needsBoolCheck = false;
         const isBooleanName  = colName.endsWith('_yn') || colName.startsWith('is_');
         const hasBoolKeyword = boolTypes.some(bt => 0 < this.indexOf(bt));
         if (isBooleanName || hasBoolKeyword) {
-            ret = `varchar2(1${this._ctx.semantics()})`;
-            booleanCheck = '\n' + tab + tab + ' '.repeat(parent.maxChildNameLen())
-                + 'constraint ' + concatNames(this._ctx.objPrefix(), parent_child)
-                + ` check (${this.parseName()} in ('Y','N'))`;
+            base       = 'varchar';
+            varcharLen = 1;
+            needsBoolCheck = true;
         }
         const dbVer = this._ctx.getOptionValue('db') as string | null;
-        if (booleanCheck !== '' && (
+        if (needsBoolCheck && (
             this._ctx.getOptionValue('boolean') === 'native'
             || (this._ctx.getOptionValue('boolean') !== 'yn' && dbVer && dbVer.length > 0 && 23 <= (getMajorVersion(dbVer) ?? 0))
         )) {
-            booleanCheck = '';
-            ret = 'boolean';
+            needsBoolCheck = false;
+            base = 'boolean';
         }
-        const isNativeBoolean = (ret === 'boolean');
+        const isNativeBoolean = (base === 'boolean');
 
         // Phase 5: phone_number + num(precision)
-        if (this.indexOf('phone_number') === 0) ret = 'number';
+        if (this.indexOf('phone_number') === 0) base = 'number';
+        let numericSpec: string | undefined;
         const numFrom = this.indexOf('num', true);
         if (0 < numFrom) {
-            ret = 'number';
+            base = 'number';
             const numTo = this.indexOf(')');
-            if (0 < numTo) ret += this.content.substring(src[numFrom + 1].begin, src[numTo].end).toLowerCase();
+            if (0 < numTo) numericSpec = this.content.substring(src[numFrom + 1].begin, src[numTo].end).toLowerCase();
         }
 
         // Phase 6: date / timestamp override
-        if (_nameImpliesDate(colName, src, datePos))
-            ret = String(this._ctx.getOptionValue('Date Data Type') ?? '').toLowerCase();
+        if (_nameImpliesDate(colName, src, datePos)) {
+            const dateOpt = String(this._ctx.getOptionValue('Date Data Type') ?? '').toLowerCase();
+            if (dateOpt === TIMESTAMP_LOWER)  base = 'timestamp';
+            else if (dateOpt === TSWTZ_LOWER)  base = 'tswtz';
+            else if (dateOpt === TSWLTZ_LOWER) base = 'tswltz';
+            else base = 'date';
+        }
 
-        // Phase 7: LOB / JSON (only when no vc keyword)
+        // Phase 7: LOB / JSON
         if (vcPos < 0) {
-            if (this.occursBeforeOption('clob')) ret = 'clob';
-            if (this.occursBeforeOption('blob') || this.occursBeforeOption('file')) ret = 'blob';
-            if (this.occursBeforeOption('json')) {
-                ret = (dbVer && dbVer.length > 0 && 23 <= (getMajorVersion(dbVer) ?? 0))
-                    ? 'json'
-                    : `clob check (${this.parseName()} is json)`;
-            }
+            if (this.occursBeforeOption('clob')) base = 'clob';
+            if (this.occursBeforeOption('blob') || this.occursBeforeOption('file')) base = 'blob';
+            if (this.occursBeforeOption('json')) base = 'json';
         }
 
         // Phase 8: geometry, domain (23+), timestamp variants
-        for (const i in geoTypes) if (this.occursBeforeOption(geoTypes[i])) { ret = 'sdo_geometry'; break; }
+        for (const i in geoTypes) if (this.occursBeforeOption(geoTypes[i])) { base = 'geometry'; break; }
         if (this.isOption('domain') && dbVer && dbVer.length > 0 && 23 <= (getMajorVersion(dbVer) ?? 0))
-            ret = this.getOptionValue('domain') ?? ret;
-        if (this.occursBeforeOption('tswltz') && slashPos !== 0) ret = TSWLTZ_LOWER;
-        else if (this.occursBeforeOption('tswtz') || this.occursBeforeOption('tstz')) ret = TSWTZ_LOWER;
-        else if (this.occursBeforeOption('ts')) ret = TIMESTAMP_LOWER;
+            base = this.getOptionValue('domain') ?? base;
+        if (this.occursBeforeOption('tswltz') && slashPos !== 0) base = 'tswltz';
+        else if (this.occursBeforeOption('tswtz') || this.occursBeforeOption('tstz')) base = 'tswtz';
+        else if (this.occursBeforeOption('ts')) base = 'timestamp';
 
-        return { type: ret, booleanCheck, isNativeBoolean, parent_child };
+        const result: SemanticType = { base, colName, varcharLen, needsBoolCheck, isNativeBoolean, parent_child };
+        if (numericSpec !== undefined) result.numericSpec = numericSpec;
+        if (vectorSpec  !== undefined) result.vectorSpec  = vectorSpec;
+        return result;
     }
 
     inferType(): string {
@@ -471,22 +470,22 @@ export class DdlNode implements IDdlNode {
         if (src[0].value === 'view' || (1 < src.length && src[1].value === '=')) return 'view';
         if (src[0].value === 'dv') return 'dv';
         if (this.parent === null) return 'table';
-        const { type } = this._inferTypeFull();
+        const sem = this._inferTypeFull();
         if (this.isOption('fk') || 0 < this.indexOf('reference', true)) {
-            const parentRef = this.refId();
             let fkType = 'number';
-            if (type === 'integer') fkType = type;
-            const refNode = this._ctx.find(parentRef!);
+            if (sem.base === 'integer') fkType = 'integer';
+            const parentRef = this.refId();
+            const refNode   = this._ctx.find(parentRef!);
             if (refNode !== null && refNode.getExplicitPkName() !== null)
                 fkType = refNode.getPkType();
             return fkType;
         }
-        return type;
+        return sem.base;
     }
 
     getPlsqlType(): string {
         const t = this.inferType();
-        if (t.startsWith('varchar2')) return 'varchar2';
+        if (t === 'varchar') return 'varchar2';
         return t;
     }
 
