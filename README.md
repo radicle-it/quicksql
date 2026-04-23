@@ -1,5 +1,7 @@
 This is a technical summary of the **QuickSQL TypeScript Refactoring**, designed for developers who wish to maintain or extend the engine.
 
+try **examples/interactive.html**
+
 QuickSQL TypeScript Architecture Overview
 =========================================
 
