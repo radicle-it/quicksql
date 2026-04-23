@@ -76,6 +76,17 @@ export interface IDdlNode {
     cardinality(): number;
 }
 
+// ── DDLGenerator ─────────────────────────────────────────────────────────────
+
+/**
+ * Contract every DDL generator must fulfil.
+ * quicksql depends only on this interface, not on any concrete generator class.
+ */
+export interface DDLGenerator {
+    generateFullDDL(): string;
+    generateERD():     ErdOutput;
+}
+
 // ── DdlContext ─────────────────────────────────────────────────────────────────
 
 /**

@@ -1,13 +1,13 @@
 /* globals __PACKAGE_VERSION__ */
 declare const __PACKAGE_VERSION__: string | undefined;
 
-import tree, { OracleDDLGenerator, DdlNode } from './tree.js';
+import tree, { createGenerator, DdlNode } from './tree.js';
 import lexer from './lexer.js';
 import json2qsql from './json2qsql.js';
 import errorMsgs from './errorMsgs.js';
 import { canonicalObjectName } from './naming.js';
-import type { DdlContext, IDdlNode, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
-export type { DdlContext, IDdlNode, ErdColumn, ErdItem, ErdLink, ErdOutput };
+import type { DdlContext, DDLGenerator, IDdlNode, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
+export type { DdlContext, DDLGenerator, IDdlNode, ErdColumn, ErdItem, ErdLink, ErdOutput };
 
 // ── PK / date-type canonical string constants ────────────────────────────────
 
@@ -246,13 +246,13 @@ export class quicksql implements DdlContext {
 
     getERD(): ErdOutput {
         if (this._erd != null) return this._erd;
-        this._erd = new OracleDDLGenerator(this).generateERD();
+        this._erd = createGenerator(this).generateERD();
         return this._erd;
     }
 
     getDDL(): string {
         if (this._ddl != null) return this._ddl;
-        this._ddl = new OracleDDLGenerator(this).generateFullDDL() + this._makeFooter();
+        this._ddl = createGenerator(this).generateFullDDL() + this._makeFooter();
         return this._ddl;
     }
 

@@ -5,7 +5,7 @@ import { LexerToken } from './lexer.js';
 import amend_reserved_word from './reserved_words.js';
 import split_str from './split_str.js';
 import { DdlNode, DEFAULT_NAMING, tab, EXPANDING_TYPES } from './node.js';
-import type { DdlContext, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
+import type { DdlContext, DDLGenerator, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
 
 // ── Local constants ───────────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ function getValue(obj: unknown, oName: string | null, attr: string, oName2Match:
 
 // ── OracleDDLGenerator ────────────────────────────────────────────────────────
 
-export class OracleDDLGenerator {
+export class OracleDDLGenerator implements DDLGenerator {
     private _ddl:    DdlContext;
     private _naming: Naming;
 
@@ -1538,4 +1538,15 @@ export class OracleDDLGenerator {
 
         return output;
     }
+}
+
+// ── Generator factory ─────────────────────────────────────────────────────────
+
+/**
+ * Returns the appropriate DDLGenerator for the given context.
+ * Currently always returns OracleDDLGenerator; extend this function when
+ * additional database dialects are added (Postgres, MySQL, etc.).
+ */
+export function createGenerator(ctx: DdlContext): DDLGenerator {
+    return new OracleDDLGenerator(ctx);
 }
