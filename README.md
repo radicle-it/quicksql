@@ -1,158 +1,117 @@
-# Quick SQL <!-- omit in toc -->
+This is a technical summary of the **QuickSQL TypeScript Refactoring**, designed for developers who wish to maintain or extend the engine.
 
-[![Node.js CI](https://github.com/oracle/quicksql/actions/workflows/node.js.yml/badge.svg)](https://github.com/oracle/quicksql/actions/workflows/node.js.yml)
+QuickSQL TypeScript Architecture Overview
+=========================================
 
-## Table of Contents <!-- omit in toc -->
+The project has been refactored from a monolithic JavaScript structure into a **decoupled, type-safe architecture** following a "Compiler Frontend" pattern. The system translates Shorthand Syntax (QSQL) into relational DDL or ERD metadata.
 
-- [Overview](#overview)
-- [Install](#install)
-- [Translating Quick SQL into Oracle SQL Data Definition Language (DDL)](#translating-quick-sql-into-oracle-sql-data-definition-language-ddl)
-    - [DDL NodeJS ECMA Script Module (ESM) Example](#ddl-nodejs-ecma-script-module-esm-example)
-    - [DDL NodeJS Common JS (CJS) Example](#ddl-nodejs-common-js-cjs-example)
-    - [DDL Browser ECMA Script Module (ESM) Example](#ddl-browser-ecma-script-module-esm-example)
-    - [DDL Browser Universal Module Definition (UMD) Example](#ddl-browser-universal-module-definition-umd-example)
-- [Transforming Quick SQL into an Entity-Relationship Diagram (ERD)](#transforming-quick-sql-into-an-entity-relationship-diagram-erd)
-- [Contributing](#contributing)
-- [Security](#security)
-- [License](#license)
+### Core Architectural Pattern: **Decoupled Transformation Pipeline**
 
-## Overview
+The engine operates in four distinct stages:
 
-Quick SQL is a markdown-like shorthand syntax that expands to standards-based
-Oracle SQL. It is useful to rapidly design and prototype data models. Take a
-look at the example below:
+1.  **Lexical Analysis**: Raw string to a flat token stream.
+    
+2.  **Syntactic Recognition**: Token stream to a hierarchical Forest/Tree.
+    
+3.  **Semantic Analysis**: Nodes self-infer types and relationships.
+    
+4.  **Generation**: DDL Generators (Visitors) traverse the tree to produce output.
+    
 
-![Quick SQL](./assets/quick-sql-dark.png)
+1\. Core Modules & Responsibilities
+-----------------------------------
 
-Previously, Quick SQL was only available within Oracle Application Express. This
-project reimplements the Quick SQL parser and translator into a JavaScript
-library which can be used in both NodeJS and the browser.
+### lexer.ts (The Tokenizer)
 
-This repository also includes a Quick SQL to Entity Relationship Diagram
-module that can be used as seen in the example below:
+*   **Purpose**: Scans the input string and produces LexerToken objects.
+    
+*   **Key Feature**: It pre-calculates lowerValue for every token to avoid expensive .toLowerCase() calls during tree traversal.
+    
+*   **Extensibility**: If adding new operators (e.g., specific Oracle 23c symbols), modify the TokenType union and the lexer function loop.
+    
 
-![Quick ERD](./assets/quick-erd-dark.png)
+### parser.ts (The Tree Builder)
 
-## Install
+*   **Function**: recognize(ctx: DdlContext)
+    
+*   **Logic**: Implements an indentation-aware parser. It merges multi-line annotation blocks (detecting unclosed {...}) and builds the parent-child hierarchy based on LexerToken offsets.
+    
+*   **How to extend**: To support new top-level directives (like #settings), update the OUTER loop logic.
+    
 
-```bash
-npm install @oracle/quicksql
-```
+### node.ts (The Semantic Brain)
 
-## Translating Quick SQL into Oracle SQL Data Definition Language (DDL)
+*   **Class**: DdlNode implements IDdlNode.
+    
+*   **Key Functions**:
+    
+    *   inferType(): Centralized logic for mapping shorthand (e.g., vc50) to abstract semantic types.
+        
+    *   parseName(): Handles identifier extraction, quoted strings, and shorthand-to-object name mapping.
+        
+    *   isOption(key): Helper to check for directives (e.g., /insert, /nn).
+        
+*   **Developer Note**: This is the most important file for adding new column-level features.
+    
 
-The Quick SQL to DDL translator is the product's core component, It allows users
-to transform a Quick SQL string into an Oracle SQL string.
+### generator.ts (The SQL Writer)
 
-The Quick SQL Syntax and Grammar are documented [here](./doc/user/quick-sql-grammar.md)
+*   **Pattern**: **Strategy/Factory**.
+    
+*   **Classes**: OracleDDLGenerator implements DDLGenerator.
+    
+*   **Responsibility**: Traverses the tree to generate CREATE TABLE, ALTER TABLE, and specialized Oracle 23c **JSON Duality Views**.
+    
+*   **Extensibility**: To support another dialect (e.g., PostgreSQL), create a new class implementing DDLGenerator and register it in createGenerator().
+    
 
-See below for examples of how to use this library.
+2\. Key Type Definitions (types.ts)
+-----------------------------------
 
-### Command Line Usage
+The system relies on strict interfaces to keep modules decoupled:
 
-NPXJS regitry already contains package with conflicting name. To disambiguate, please use command like this:
+*   **IDdlNode**: Defines the contract for any object in the tree. Allows the generator to interact with nodes without knowing the internal parsing logic.
+    
+*   **SemanticType**: A database-agnostic description of a column (base type, length, precision). Generators map this to specific SQL types.
+    
+*   **DdlContext**: A shared state object holding global settings, the forest of nodes, and error trackers.
+    
 
-```
-npx @oracle/quicksql test/apex/department_employees.qsql > output.sql
-```
+3\. Supporting Utilities
+------------------------
 
-### DDL NodeJS ECMA Script Module (ESM) Example
+*   **naming.ts**: Contains logic for singular()/plural() transformations and Oracle identifier quoting rules. Essential for maintaining naming consistency.
+    
+*   **errorMsgs.ts**: Performs post-parsing validation (e.g., checking for misaligned indents or invalid attribute combinations).
+    
+*   **json2qsql.ts**: An experimental utility to reverse-engineer a JSON document into QSQL shorthand.
+    
 
-```js
-import { quicksql } from "@oracle/quicksql";
-import fs from "fs";
+4\. How to Extend the Engine
+----------------------------
 
-try {
-    const text = fs.readFileSync( './test/department_employees.quicksql' );
-    console.log( new quicksql( text.toString() ).getDDL() );
-} catch( e ) {
-    console.error( e );
-};
-```
+### Adding a new Column Directive (e.g., /encrypted)
 
-### DDL NodeJS Common JS (CJS) Example
+1.  **Update types.ts**: Add a property to the IDdlNode interface if necessary.
+    
+2.  **Update node.ts**: Add logic to detect the new token in the src array.
+    
+3.  **Update generator.ts**: Modify generateTable (or similar) to check for child.isOption('encrypted') and append the appropriate SQL clause.
+    
 
-```js
-const { quicksql } = require( "@oracle/quicksql" );
-const fs = require( "fs" );
+### Adding a new Database Dialect
 
-try {
-    const text = fs.readFileSync( './test/department_employees.quicksql' );
-    console.log( new quicksql( text.toString() ).getDDL() );
-} catch( e ) {
-    console.error( e );
-};
-```
+1.  Create src/generators/postgres.ts.
+    
+2.  Implement the DDLGenerator interface.
+    
+3.  Update createGenerator in generator.ts to switch between dialects based on a context option.
+    
 
-### DDL Browser ECMA Script Module (ESM) Example
+### Troubleshooting the Parser
 
-```html
-<script type="module">
-    import { quicksql } from './dist/quick-sql.js';
-    document.body.innerText = new quicksql(
-`departments /insert 2
-    name /nn
-    location
-    country
-    employees /insert 4
-        name /nn vc50
-        email /lower
-        cost center num
-        date hired
-        job vc255
+If a specific line is parsed incorrectly, inspect the src property of the DdlNode. This array contains the exact LexerToken stream used to build that specific node.
 
-view emp_v departments employees
+### Technical Summary for LLM-Aided Coding
 
-# settings = { "prefix": null, "semantics": "CHAR", "DV": false }
-
-`
-    ).getDDL();
-</script>
-```
-
-### DDL Browser Universal Module Definition (UMD) Example
-
-```html
-<script src="./dist/quick-sql.umd.cjs"></script>
-<script>
-    document.body.innerText = new quickSQL.quicksql(
-`departments /insert 2
-    name /nn
-    location
-    country
-    employees /insert 4
-        name /nn vc50
-        email /lower
-        cost center num
-        date hired
-        job vc255
-
-view emp_v departments employees
-
-# settings = { "prefix": null, "semantics": "CHAR", "DV": false }
-
-`
-    ).toDDL();
-</script>
-```
-
-## Transforming Quick SQL into an Entity-Relationship Diagram (ERD)
-
-Requires a paid library. Review the usage [here](./doc/user/quick-erd.md)
-
-## Contributing
-
-This project welcomes contributions from the community. Before submitting a pull
-request, please [review our contribution guide](./CONTRIBUTING.md)
-
-## Security
-
-Please consult the [security guide](./SECURITY.md) for our responsible security
-vulnerability disclosure process
-
-## License
-
-Copyright (c) 2023 Oracle and/or its affiliates.
-
-Released under the Universal Permissive License v1.0 as shown at
-<https://oss.oracle.com/licenses/upl/>.
+> "This project is a TypeScript refactoring of QuickSQL. It uses a **Recursive Descent Parser** logic in parser.ts to build a tree of DdlNode objects. Generation is handled by a **Visitor-like Generator** in generator.ts. All types are centralized in types.ts. The system supports Oracle-specific features like JSON Duality Views and utilizes a custom Lexer for performance."
