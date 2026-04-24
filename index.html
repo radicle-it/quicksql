@@ -119,7 +119,7 @@
             overflow: hidden;
         }
 
-        .panel + .panel { border-left: 2px solid var(--border); }
+        .panel + .panel { border-left: none; }   /* sostituito da resize-handle */
 
         .panel-label {
             padding: 3px 12px;
@@ -162,7 +162,7 @@
             resize: none;
             outline: none;
             overflow: auto;
-            z-index: 1;
+            z-index: 2;
             /* hide scrollbar — dragged by .hl-layer's via JS */
             scrollbar-width: none;
         }
@@ -249,6 +249,148 @@
         .sql-comment    { color: var(--sql-comment);    font-style: italic; }
         .sql-identifier { color: var(--sql-identifier); }
         .sql-constraint { color: var(--sql-constraint); }
+
+        /* ── Line numbers ── */
+        .ln-layer {
+            position: absolute;
+            top: 0; left: 0; bottom: 0;
+            width: 48px;
+            padding: 14px 8px 14px 4px;
+            font-family: inherit; font-size: inherit; line-height: 1.65;
+            text-align: right; color: #3e3e3e;
+            background: var(--bg); border-right: 1px solid #292929;
+            overflow: hidden; pointer-events: none; user-select: none;
+            white-space: pre; z-index: 1;
+        }
+        /* push code right to clear the line-numbers strip */
+        .editor-wrap textarea,
+        .editor-wrap .hl-layer { padding-left: 56px; }
+
+        /* ── Examples dropdown ── */
+        #examples-panel {
+            position: fixed; background: var(--bg-panel);
+            border: 1px solid var(--border); border-radius: 4px;
+            min-width: 230px; z-index: 500; display: none;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6); overflow: hidden;
+        }
+        #examples-panel.open { display: block; }
+        .ex-item {
+            display: block; width: 100%; padding: 8px 14px 7px;
+            background: none; border: none; border-bottom: 1px solid var(--border);
+            text-align: left; font: inherit; cursor: pointer;
+        }
+        .ex-item:last-child { border-bottom: none; }
+        .ex-item:hover { background: #2a2d30; }
+        .ex-item strong { display: block; color: var(--text); font-size: 12px; margin-bottom: 2px; }
+        .ex-item span   { font-size: 10px; color: var(--text-muted); }
+
+        /* ── ERD toolbar ── */
+        .erd-toolbar {
+            display: flex; gap: 6px; padding: 4px 10px;
+            background: var(--bg-panel); border-bottom: 1px solid var(--border);
+            flex-shrink: 0; align-items: center;
+        }
+        .erd-toolbar .sep { flex: 1; }
+
+        /* ── Resize handle ── */
+        .resize-handle {
+            width: 5px; background: var(--border);
+            cursor: col-resize; flex-shrink: 0; transition: background .12s;
+        }
+        .resize-handle:hover, .resize-handle.dragging { background: #007acc; }
+
+        /* ── Settings dropdown ── */
+        #settings-panel {
+            position: fixed;
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 14px 16px 12px;
+            min-width: 340px;
+            z-index: 500;
+            display: none;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+        }
+        #settings-panel.open { display: block; }
+        .sett-title {
+            font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px;
+            color: var(--text-muted); margin-bottom: 10px;
+            padding-bottom: 6px; border-bottom: 1px solid var(--border);
+        }
+        .sett-row { display: flex; align-items: center; margin-bottom: 7px; gap: 8px; font-size: 11px; }
+        .sett-row label { color: var(--text-muted); min-width: 112px; }
+        .sett-row select,
+        .sett-row input[type=text] {
+            flex: 1; background: var(--bg); border: 1px solid var(--border);
+            border-radius: 3px; color: var(--text); font: inherit; font-size: 11px; padding: 3px 6px;
+        }
+        .sett-row select:focus,
+        .sett-row input[type=text]:focus { outline: none; border-color: #007acc; }
+        .sett-apply {
+            margin-top: 10px; width: 100%; padding: 5px; background: #007acc;
+            border: none; border-radius: 3px; color: #fff; font: inherit; font-size: 11px; cursor: pointer;
+        }
+        .sett-apply:hover { background: #0090e8; }
+        #settings-panel .sett-sep {
+            margin: 8px 0; border: none; border-top: 1px solid var(--border);
+        }
+
+        /* ── Help drawer ── */
+        #help-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.35); z-index: 400;
+        }
+        #help-overlay.open { display: block; }
+        #help-drawer {
+            position: fixed; top: 0; right: 0; bottom: 0; width: 400px;
+            background: var(--bg-ui); border-left: 2px solid var(--border);
+            z-index: 401; display: flex; flex-direction: column;
+            transform: translateX(100%); transition: transform .22s ease;
+        }
+        #help-drawer.open { transform: translateX(0); }
+        .hdw-hdr {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 9px 16px; background: var(--bg-panel);
+            border-bottom: 1px solid var(--border); flex-shrink: 0;
+        }
+        .hdw-hdr strong { color: var(--text); font-size: 13px; }
+        .hdw-close {
+            background: none; border: none; color: var(--text-muted);
+            font-size: 22px; cursor: pointer; line-height: 1; padding: 0;
+        }
+        .hdw-close:hover { color: var(--text); }
+        .hdw-body { flex: 1; overflow-y: auto; }
+        details.hdw-sec { border-bottom: 1px solid var(--border); }
+        details.hdw-sec > summary {
+            padding: 7px 16px; font-size: 10px; text-transform: uppercase;
+            letter-spacing: 0.8px; color: #4fc1ff; background: var(--bg-panel);
+            cursor: pointer; user-select: none; list-style: none;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        details.hdw-sec > summary::-webkit-details-marker { display: none; }
+        details.hdw-sec > summary::after  { content: '▾'; font-size: 11px; color: var(--text-muted); }
+        details.hdw-sec[open] > summary::after { content: '▴'; }
+        details.hdw-sec > summary:hover { background: #2a2d30; }
+        .hdw-content { padding: 8px 14px 12px; }
+        .ref { width: 100%; border-collapse: collapse; font-size: 11px; }
+        .ref tr+tr td { border-top: 1px solid #252525; }
+        .ref td { padding: 4px 5px; vertical-align: top; line-height: 1.5; }
+        .ref td:first-child {
+            color: #4ec9b0; white-space: nowrap; width: 44%;
+            font-family: 'Cascadia Code','Consolas',monospace;
+        }
+        .ref td:last-child { color: var(--text-muted); }
+        .ref td em { color: #c586c0; font-style: normal; }
+        .ref td code { color: #d7ba7d; font-family: 'Cascadia Code','Consolas',monospace; font-size: 10px; }
+        kbd {
+            display: inline-block; padding: 1px 5px; background: #333;
+            border: 1px solid #555; border-radius: 3px; font-size: 10px;
+            color: var(--text); font-family: inherit;
+        }
+        .hdw-note { font-size: 11px; color: var(--text-muted); margin: 5px 0; line-height: 1.5; }
+        .hdw-eg   { font-size: 10px; color: #d7ba7d; font-family: 'Cascadia Code','Consolas',monospace;
+                    white-space: pre; background: var(--bg); padding: 6px 8px;
+                    border-radius: 3px; margin: 6px 0; display: block; }
     </style>
 </head>
 <body class="vscode-dark">
@@ -258,10 +400,61 @@
         <img src="img/radicle_01.png" class="logo-img" alt="Radicle">
     </a>
     <span class="title">QuickSQL</span>
-    <span class="subtitle">- Write shorthand on the left, the Oracle DDL appears on the right in real time</span>
+    <span class="subtitle">— scrivi shorthand a sinistra, il DDL Oracle appare a destra in tempo reale</span>
     <span class="spacer"></span>
+    <button id="btn-examples" class="tool-btn">Esempi ▾</button>
+    <button id="btn-settings" class="tool-btn">⚙ Settings</button>
+    <button id="btn-help"     class="tool-btn">? Aiuto</button>
     <a href="https://radicle.it" target="_blank" rel="noopener" class="radicle-link">radicle.it</a>
 </header>
+
+<!-- Examples dropdown -->
+<div id="examples-panel"></div>
+
+<!-- Settings dropdown -->
+<div id="settings-panel">
+    <div class="sett-title">Impostazioni schema</div>
+    <div class="sett-row">
+        <label for="sett-pk">Primary Key</label>
+        <select id="sett-pk">
+            <option value="">— default —</option>
+            <option value="seq">seq (sequence)</option>
+            <option value="identityDataType">identityDataType</option>
+            <option value="guid">guid</option>
+            <option value="none">none</option>
+        </select>
+    </div>
+    <div class="sett-row">
+        <label for="sett-sem">Char Semantics</label>
+        <select id="sett-sem">
+            <option value="">— default —</option>
+            <option value="CHAR">CHAR</option>
+            <option value="BYTE">BYTE</option>
+        </select>
+    </div>
+    <div class="sett-row">
+        <label for="sett-db">DB Version</label>
+        <input id="sett-db" type="text" placeholder="es. 23c, 19c, 21c">
+    </div>
+    <hr class="sett-sep">
+    <div class="sett-row">
+        <label for="sett-prefix">Prefisso tabelle</label>
+        <input id="sett-prefix" type="text" placeholder="es. app_, hr_">
+    </div>
+    <div class="sett-row">
+        <label for="sett-schema">Schema</label>
+        <input id="sett-schema" type="text" placeholder="es. HR, APP">
+    </div>
+    <div class="sett-row">
+        <label for="sett-edit">Editionable</label>
+        <select id="sett-edit">
+            <option value="">— default —</option>
+            <option value="yes">yes</option>
+            <option value="no">no</option>
+        </select>
+    </div>
+    <button class="sett-apply" id="btn-sett-apply">Applica impostazioni</button>
+</div>
 <div id="error"></div>
 
 <div class="panels">
@@ -269,6 +462,7 @@
     <div class="panel">
         <div class="panel-label">Quick SQL — shorthand</div>
         <div class="editor-wrap">
+            <div class="ln-layer" id="ln-layer" aria-hidden="true"></div>
             <pre class="hl-layer" id="qs-hl" aria-hidden="true"></pre>
             <textarea id="input" spellcheck="false">departments /insert 2
    name /nn
@@ -288,6 +482,8 @@ emp_v = departments employees
         </div>
     </div>
 
+    <div class="resize-handle" id="resize-handle"></div>
+
     <div class="panel">
         <div class="panel-tabs">
             <button class="tab-btn active" data-tab="ddl">DDL Oracle SQL</button>
@@ -295,12 +491,20 @@ emp_v = departments employees
         </div>
         <div class="tab-pane active" data-tab="ddl">
             <div class="ddl-toolbar">
-                <button id="btn-copy"  class="tool-btn">Copy DDL</button>
-                <button id="btn-share" class="tool-btn">Share link</button>
+                <button id="btn-copy"     class="tool-btn">Copia DDL</button>
+                <button id="btn-download" class="tool-btn">Scarica .sql</button>
+                <button id="btn-share"    class="tool-btn">Condividi link</button>
             </div>
             <pre id="output"></pre>
         </div>
         <div class="tab-pane" data-tab="erd">
+            <div class="erd-toolbar">
+                <button id="btn-erd-fit"   class="tool-btn">⊡ Fit</button>
+                <button id="btn-erd-zin"   class="tool-btn">+ Zoom</button>
+                <button id="btn-erd-zout"  class="tool-btn">− Zoom</button>
+                <span class="sep"></span>
+                <button id="btn-erd-reset" class="tool-btn">↺ Reset layout</button>
+            </div>
             <div id="erd-container"></div>
         </div>
     </div>
@@ -1095,7 +1299,9 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 // Live text update.
 function update() {
-    const src = inputEl.value;
+    const src   = inputEl.value;
+    const lines = src.split('\n').length;
+    lnEl.textContent = Array.from({ length: lines }, (_, i) => i + 1).join('\n');
     qsHl.innerHTML = highlightQuickSQL(src) + '\n ';
     try {
         localStorage.setItem(LS_KEY, src);
@@ -1125,9 +1331,12 @@ function update() {
     }
 }
 
+const lnEl = document.getElementById('ln-layer');
+
 inputEl.addEventListener('scroll', () => {
     qsHl.scrollTop  = inputEl.scrollTop;
     qsHl.scrollLeft = inputEl.scrollLeft;
+    lnEl.scrollTop  = inputEl.scrollTop;
 });
 
 inputEl.addEventListener('keydown', e => {
@@ -1142,7 +1351,472 @@ inputEl.addEventListener('keydown', e => {
 
 inputEl.addEventListener('input', update);
 update();
+
+// ════════════════════════════════════════════════════════════════
+//  Download SQL
+// ════════════════════════════════════════════════════════════════
+
+document.getElementById('btn-download').addEventListener('click', () => {
+    if (!_lastDdlText) return;
+    const blob = new Blob([_lastDdlText], { type: 'text/plain' });
+    const a    = document.createElement('a');
+    a.href     = URL.createObjectURL(blob);
+    a.download = 'schema.sql';
+    a.click();
+    URL.revokeObjectURL(a.href);
+});
+
+// ════════════════════════════════════════════════════════════════
+//  Settings panel
+// ════════════════════════════════════════════════════════════════
+
+const settingsPanel = document.getElementById('settings-panel');
+const btnSettings   = document.getElementById('btn-settings');
+
+/** Parse the current # settings line into a plain object. */
+function parseSettings() {
+    const m = inputEl.value.match(/^#\s*settings\s*=\s*\{([^}]*)\}/m);
+    if (!m) return {};
+    const out = {};
+    const re  = /"?(\w+)"?\s*:\s*("([^"]*)"|([^,}\s]+))/g;
+    let hit;
+    while ((hit = re.exec(m[1])) !== null) {
+        const k = hit[1];
+        const v = hit[3] !== undefined ? hit[3] : hit[4];
+        out[k]  = v === 'null' ? '' : v === 'true' ? 'true' : v === 'false' ? 'false' : v;
+    }
+    return out;
+}
+
+/** Rebuild the # settings line and inject/replace it in the textarea. */
+function writeSettings(s) {
+    const pairs = [];
+    if (s.pk)     pairs.push(`pk: ${s.pk}`);
+    if (s.sem)    pairs.push(`semantics: ${s.sem}`);
+    if (s.db)     pairs.push(`db: ${s.db}`);
+    if (s.prefix) pairs.push(`prefix: ${s.prefix}`);
+    if (s.schema) pairs.push(`schema: ${s.schema}`);
+    if (s.edit)   pairs.push(`editionable: ${s.edit}`);
+    const line = `# settings = { ${pairs.join(', ')} }`;
+    const text = inputEl.value;
+    if (/^#\s*settings\s*=/m.test(text)) {
+        inputEl.value = text.replace(/^#\s*settings\s*=.*$/m, line);
+    } else {
+        inputEl.value = text.trimEnd() + '\n\n' + line + '\n';
+    }
+    update();
+}
+
+/** Populate form controls from the current settings line. */
+function syncSettingsForm() {
+    const s = parseSettings();
+    document.getElementById('sett-pk').value     = s.pk     || '';
+    document.getElementById('sett-sem').value    = s.semantics || '';
+    document.getElementById('sett-db').value     = s.db     || '';
+    document.getElementById('sett-prefix').value = s.prefix || '';
+    document.getElementById('sett-schema').value = s.schema || '';
+    document.getElementById('sett-edit').value   = s.editionable || '';
+}
+
+btnSettings.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = settingsPanel.classList.toggle('open');
+    if (isOpen) {
+        syncSettingsForm();
+        const r = btnSettings.getBoundingClientRect();
+        settingsPanel.style.top   = r.bottom + 4 + 'px';
+        settingsPanel.style.right = window.innerWidth - r.right + 'px';
+    }
+});
+
+document.getElementById('btn-sett-apply').addEventListener('click', () => {
+    writeSettings({
+        pk:     document.getElementById('sett-pk').value,
+        sem:    document.getElementById('sett-sem').value,
+        db:     document.getElementById('sett-db').value,
+        prefix: document.getElementById('sett-prefix').value,
+        schema: document.getElementById('sett-schema').value,
+        edit:   document.getElementById('sett-edit').value,
+    });
+    settingsPanel.classList.remove('open');
+});
+
+// Close settings panel on outside click
+document.addEventListener('click', (e) => {
+    if (!settingsPanel.contains(e.target) && e.target !== btnSettings)
+        settingsPanel.classList.remove('open');
+});
+
+// ════════════════════════════════════════════════════════════════
+//  Help drawer
+// ════════════════════════════════════════════════════════════════
+
+const helpOverlay = document.getElementById('help-overlay');
+const helpDrawer  = document.getElementById('help-drawer');
+const btnHelp     = document.getElementById('btn-help');
+
+function openHelp()  { helpOverlay.classList.add('open');    helpDrawer.classList.add('open'); }
+function closeHelp() { helpOverlay.classList.remove('open'); helpDrawer.classList.remove('open'); }
+
+btnHelp.addEventListener('click', openHelp);
+document.getElementById('help-close').addEventListener('click', closeHelp);
+helpOverlay.addEventListener('click', closeHelp);
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        closeHelp();
+        settingsPanel.classList.remove('open');
+        examplesPanel.classList.remove('open');
+    }
+});
+
+// ════════════════════════════════════════════════════════════════
+//  Examples library
+// ════════════════════════════════════════════════════════════════
+
+const EXAMPLES = [
+    {
+        label: 'HR — Risorse Umane',
+        desc:  'Departments, employees, jobs',
+        qsql:
+`departments /insert 3
+   name /nn /upper
+   location vc100
+   budget num(12,2)
+   employees /insert 10
+      name /nn
+      email /lower /nn
+      hire_date date
+      salary num(10,2)
+      job_title vc100`,
+    },
+    {
+        label: 'E-Commerce',
+        desc:  'Customers, orders, products',
+        qsql:
+`customers /insert 5
+   name /nn
+   email /lower /nn /unique
+   phone vc20
+   orders /insert 3
+      order_date date /nn
+      status /check PENDING,SHIPPED,DELIVERED
+      total num(10,2)
+      order_lines /insert 4
+         quantity int /nn
+         unit_price num(10,2) /nn
+
+products /insert 20
+   name vc100 /nn /upper
+   price num(10,2) /nn
+   stock int
+   category vc50`,
+    },
+    {
+        label: 'Blog',
+        desc:  'Authors, posts, comments',
+        qsql:
+`authors /insert 5
+   name /nn
+   email /lower /nn /unique
+   bio
+   posts /insert 8
+      title vc200 /nn
+      body clob
+      published_at ts
+      category /check TECH,NEWS,TUTORIAL
+      comments /insert 3
+         author_name /nn
+         body vc2000 /nn
+         posted_at ts`,
+    },
+    {
+        label: 'Clinica',
+        desc:  'Doctors, patients, appointments',
+        qsql:
+`doctors /insert 8
+   name /nn
+   specialty vc100
+   email /lower /nn /unique
+
+patients /insert 20
+   name /nn
+   birth_date date
+   phone vc20
+   email /lower
+   appointments /insert 15
+      appointment_date ts /nn
+      notes
+      status /check SCHEDULED,COMPLETED,CANCELLED
+      doctor_id /fk doctors`,
+    },
+    {
+        label: 'Project Management',
+        desc:  'Teams, projects, tasks',
+        qsql:
+`teams /insert 4
+   name /nn
+   budget num(12,2)
+   projects /insert 6
+      name vc100 /nn
+      start_date date
+      end_date date
+      status /check PLANNING,ACTIVE,DONE
+      tasks /insert 10
+         title vc200 /nn
+         due_date date
+         priority /check LOW,MEDIUM,HIGH
+         done bool`,
+    },
+    {
+        label: 'Inventario',
+        desc:  'Warehouses, categories, products',
+        qsql:
+`warehouses /insert 3
+   name /nn
+   location vc100
+   categories /insert 5
+      name /nn /upper
+      description
+      products /insert 20
+         name vc100 /nn /upper
+         sku vc50 /nn /unique
+         price num(10,2) /nn
+         quantity int /nn
+         reorder_level int`,
+    },
+];
+
+const examplesPanel = document.getElementById('examples-panel');
+const btnExamples   = document.getElementById('btn-examples');
+
+// Build dropdown items
+EXAMPLES.forEach((ex) => {
+    const btn = document.createElement('button');
+    btn.className = 'ex-item';
+    btn.innerHTML = `<strong>${ex.label}</strong><span>${ex.desc}</span>`;
+    btn.addEventListener('click', () => {
+        inputEl.value = ex.qsql;
+        examplesPanel.classList.remove('open');
+        lastErdPos = new Map();
+        collapsed.clear();
+        update();
+    });
+    examplesPanel.appendChild(btn);
+});
+
+btnExamples.addEventListener('click', (e) => {
+    e.stopPropagation();
+    settingsPanel.classList.remove('open');
+    const isOpen = examplesPanel.classList.toggle('open');
+    if (isOpen) {
+        const r = btnExamples.getBoundingClientRect();
+        examplesPanel.style.top   = r.bottom + 4 + 'px';
+        examplesPanel.style.left  = r.left + 'px';
+    }
+});
+
+document.addEventListener('click', (e) => {
+    if (!examplesPanel.contains(e.target) && e.target !== btnExamples)
+        examplesPanel.classList.remove('open');
+});
+
+// ════════════════════════════════════════════════════════════════
+//  ERD toolbar
+// ════════════════════════════════════════════════════════════════
+
+document.getElementById('btn-erd-fit').addEventListener('click', () => {
+    if (!x6graph) return;
+    x6graph.zoomToFit({ padding: 40, maxScale: 1 });
+    x6graph.centerContent();
+});
+document.getElementById('btn-erd-zin').addEventListener('click', () => {
+    if (x6graph) x6graph.zoom(0.15);
+});
+document.getElementById('btn-erd-zout').addEventListener('click', () => {
+    if (x6graph) x6graph.zoom(-0.15);
+});
+document.getElementById('btn-erd-reset').addEventListener('click', () => {
+    if (!lastErdData) return;
+    lastErdPos = new Map();
+    collapsed.clear();
+    try { localStorage.removeItem(LS_ERD_POS); localStorage.removeItem(LS_ERD_COL); } catch (_) {}
+    renderERD(lastErdData);
+});
+
+// ════════════════════════════════════════════════════════════════
+//  Resize handle
+// ════════════════════════════════════════════════════════════════
+
+(function initResize() {
+    const handle    = document.getElementById('resize-handle');
+    const panelsEl  = document.querySelector('.panels');
+    const leftPanel = panelsEl.children[0];   // first .panel
+
+    let dragging = false, startX = 0, startW = 0;
+
+    handle.addEventListener('mousedown', (e) => {
+        dragging = true;
+        startX   = e.clientX;
+        startW   = leftPanel.getBoundingClientRect().width;
+        handle.classList.add('dragging');
+        document.body.style.cursor    = 'col-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const total = panelsEl.getBoundingClientRect().width - 5;
+        const newW  = Math.max(180, Math.min(total - 180, startW + e.clientX - startX));
+        leftPanel.style.flex  = 'none';
+        leftPanel.style.width = newW + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        handle.classList.remove('dragging');
+        document.body.style.cursor    = '';
+        document.body.style.userSelect = '';
+    });
+})();
 </script>
+
+<!-- Help drawer -->
+<div id="help-overlay"></div>
+<aside id="help-drawer">
+    <div class="hdw-hdr">
+        <strong>Riferimento QuickSQL</strong>
+        <button class="hdw-close" id="help-close">&times;</button>
+    </div>
+    <div class="hdw-body">
+
+        <details class="hdw-sec" open>
+            <summary>Tabelle</summary>
+            <div class="hdw-content">
+                <table class="ref">
+                    <tr><td>nome_tabella</td><td>Crea tabella con PK automatica</td></tr>
+                    <tr><td>nome /insert <em>N</em></td><td>Genera N righe di dati campione</td></tr>
+                    <tr><td>nome /rest</td><td>Abilita ORDS REST sull'oggetto</td></tr>
+                    <tr><td>nome /audit</td><td>Aggiunge colonne created/updated/by</td></tr>
+                    <tr><td>nome /rowversion</td><td>Aggiunge row_version per OCC</td></tr>
+                    <tr><td>nome /api</td><td>Genera Table API (TAPI package)</td></tr>
+                    <tr><td>nome /immutable</td><td>Tabella immutabile (no UPDATE/DELETE)</td></tr>
+                    <tr><td>nome /history</td><td>Temporal history tracking</td></tr>
+                    <tr><td>nome /soda</td><td>SODA document store</td></tr>
+                </table>
+                <p class="hdw-note" style="margin-top:8px">Le tabelle indentate sotto un'altra diventano automaticamente figlie con FK verso il padre.</p>
+            </div>
+        </details>
+
+        <details class="hdw-sec">
+            <summary>Tipi di dato</summary>
+            <div class="hdw-content">
+                <table class="ref">
+                    <tr><td>vc / vc<em>N</em></td><td>varchar2(4000) / varchar2(N)</td></tr>
+                    <tr><td>vc<em>N</em>k</td><td>varchar2(Nk char)</td></tr>
+                    <tr><td>num / num(<em>p,s</em>)</td><td>number / number(p,s)</td></tr>
+                    <tr><td>int</td><td>integer</td></tr>
+                    <tr><td>date</td><td>date</td></tr>
+                    <tr><td>ts</td><td>timestamp</td></tr>
+                    <tr><td>tstz / tswtz</td><td>timestamp with time zone</td></tr>
+                    <tr><td>tswltz</td><td>timestamp with local time zone</td></tr>
+                    <tr><td>bool</td><td>boolean (23c) o number(1)</td></tr>
+                    <tr><td>json</td><td>json (23c) o clob check is json</td></tr>
+                    <tr><td>clob / blob</td><td>clob / blob</td></tr>
+                    <tr><td>vect<em>N</em></td><td>vector(N,*,*)</td></tr>
+                    <tr><td>file</td><td>Colonne APEX file upload</td></tr>
+                </table>
+            </div>
+        </details>
+
+        <details class="hdw-sec">
+            <summary>Direttive colonna</summary>
+            <div class="hdw-content">
+                <table class="ref">
+                    <tr><td>/nn</td><td>NOT NULL</td></tr>
+                    <tr><td>/unique</td><td>UNIQUE constraint</td></tr>
+                    <tr><td>/index</td><td>Crea indice sulla colonna</td></tr>
+                    <tr><td>/lower</td><td>Trigger: forza tutto minuscolo</td></tr>
+                    <tr><td>/upper</td><td>Trigger: forza tutto maiuscolo</td></tr>
+                    <tr><td>/default <em>val</em></td><td>Valore DEFAULT</td></tr>
+                    <tr><td>/check <em>A,B,C</em></td><td>CHECK IN (A, B, C)</td></tr>
+                    <tr><td>/between <em>A,B</em></td><td>CHECK BETWEEN A AND B</td></tr>
+                    <tr><td>/fk <em>tabella</em></td><td>Foreign key esplicita</td></tr>
+                    <tr><td>/pk</td><td>Dichiara la colonna come PK</td></tr>
+                </table>
+            </div>
+        </details>
+
+        <details class="hdw-sec">
+            <summary>Views &amp; JSON Duality</summary>
+            <div class="hdw-content">
+                <table class="ref">
+                    <tr><td>nome = t1 t2</td><td>View di join tra tabelle</td></tr>
+                    <tr><td>dv nome = t1</td><td>JSON Duality View (Oracle 23c)</td></tr>
+                    <tr><td>&gt; t1</td><td>Star schema: dimension table</td></tr>
+                    <tr><td>&lt; t1</td><td>Snowflake: sotto-gerarchia</td></tr>
+                </table>
+            </div>
+        </details>
+
+        <details class="hdw-sec">
+            <summary>Settings</summary>
+            <div class="hdw-content">
+                <p class="hdw-note">Inserisci a fine file oppure usa il pannello <strong>⚙ Settings</strong> nell'header.</p>
+                <code class="hdw-eg"># settings = { pk: seq, semantics: CHAR, db: 23c }</code>
+                <table class="ref" style="margin-top:6px">
+                    <tr><td>pk</td><td><em>seq</em> | <em>guid</em> | <em>identityDataType</em> | <em>none</em></td></tr>
+                    <tr><td>semantics</td><td><em>CHAR</em> | <em>BYTE</em></td></tr>
+                    <tr><td>db</td><td>Versione Oracle: <em>23c</em>, <em>19c</em>, <em>21c</em> …</td></tr>
+                    <tr><td>prefix</td><td>Prefisso tabelle (es. <em>app_</em>)</td></tr>
+                    <tr><td>schema</td><td>Nome schema Oracle (es. <em>HR</em>)</td></tr>
+                    <tr><td>editionable</td><td><em>yes</em> | <em>no</em></td></tr>
+                    <tr><td>auditcols</td><td><em>yes</em> | <em>no</em></td></tr>
+                    <tr><td>rowversion</td><td><em>yes</em> | <em>no</em></td></tr>
+                    <tr><td>DV</td><td><em>true</em> | <em>false</em> — abilita Duality View</td></tr>
+                    <tr><td>language</td><td>Locale per nomi campione (es. <em>it</em>)</td></tr>
+                </table>
+            </div>
+        </details>
+
+        <details class="hdw-sec">
+            <summary>Esempi rapidi</summary>
+            <div class="hdw-content">
+                <p class="hdw-note">Schema con gerarchia automatica:</p>
+                <code class="hdw-eg">departments /insert 2
+   name /nn
+   employees /insert 5
+      name /nn vc50
+      email /lower
+      salary num(10,2)</code>
+                <p class="hdw-note" style="margin-top:10px">Tabella con trigger e JSON:</p>
+                <code class="hdw-eg">products /audit
+   name vc100 /nn /upper
+   price num(10,2) /nn
+   specs json</code>
+                <p class="hdw-note" style="margin-top:10px">FK esplicita + audit:</p>
+                <code class="hdw-eg">orders /audit /insert 10
+   customer_id /fk customers
+   total num(10,2) /nn
+   status /check OPEN,CLOSED,PENDING</code>
+            </div>
+        </details>
+
+        <details class="hdw-sec">
+            <summary>Scorciatoie tastiera</summary>
+            <div class="hdw-content">
+                <table class="ref">
+                    <tr><td><kbd>Tab</kbd></td><td>Indenta di 3 spazi</td></tr>
+                    <tr><td><kbd>Esc</kbd></td><td>Chiude Help e Settings</td></tr>
+                </table>
+                <p class="hdw-note" style="margin-top:8px">Il DDL si aggiorna in tempo reale a ogni keystroke. Il diagramma ER si aggiorna 350 ms dopo l'ultimo tasto.</p>
+                <p class="hdw-note">Il testo QSQL viene salvato automaticamente in localStorage e ripristinato al prossimo accesso. Il pulsante <strong>Condividi link</strong> codifica schema + posizioni ERD nell'URL.</p>
+            </div>
+        </details>
+
+    </div>
+</aside>
 
 </body>
 </html>
