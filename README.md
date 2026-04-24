@@ -1,5 +1,19 @@
 This is a technical summary of the **QuickSQL TypeScript Refactoring**, designed for developers who wish to maintain or extend the engine.
 
+Version History
+---------------
+
+| Version | Date       | Author                              | Notes |
+|---------|------------|-------------------------------------|-------|
+| 2.0.0   | 2026-04-24 | Roberto Capancioni — Radicle s.r.l. | Major refactoring: multi-dialect architecture, `BaseGenerator` abstract class, factory/registry pattern, Oracle split into `OracleViewBuilder` / `OraclePlsqlBuilder` / `oracle-types.ts`, full TypeScript strict typing, `IDdlNode` interface |
+| 1.3.14  | —          | Oracle Corporation                  | Last monolithic release |
+
+Contributors
+------------
+
+*   **Oracle Corporation** — original QuickSQL engine and QSQL shorthand specification.
+*   **Roberto Capancioni, Radicle s.r.l.** — TypeScript refactoring (v2.0.0): decoupled pipeline architecture, multi-dialect generator framework, PL/SQL builder modules, strict type interfaces.
+
 try **examples/interactive.html**
 
 QuickSQL TypeScript Architecture Overview
