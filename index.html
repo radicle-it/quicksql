@@ -349,20 +349,31 @@
             background: var(--bg-panel);
             border: 1px solid var(--border);
             border-radius: 4px;
-            padding: 14px 16px 12px;
-            min-width: 340px;
+            padding: 0;
+            min-width: 360px;
             z-index: 500;
             display: none;
             box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+            max-height: calc(100vh - 60px);
+            overflow: hidden;
+            display: none;
+            flex-direction: column;
         }
-        #settings-panel.open { display: block; }
-        .sett-title {
+        #settings-panel.open { display: flex; }
+        .sett-hdr {
+            padding: 9px 14px 7px;
             font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px;
-            color: var(--text-muted); margin-bottom: 10px;
-            padding-bottom: 6px; border-bottom: 1px solid var(--border);
+            color: var(--text-muted); border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
         }
-        .sett-row { display: flex; align-items: center; margin-bottom: 7px; gap: 8px; font-size: 11px; }
-        .sett-row label { color: var(--text-muted); min-width: 112px; }
+        .sett-body { flex: 1; overflow-y: auto; padding: 10px 14px 6px; }
+        .sett-group {
+            font-size: 9px; text-transform: uppercase; letter-spacing: 0.8px;
+            color: #4fc1ff; margin: 10px 0 5px; opacity: 0.8;
+        }
+        .sett-group:first-child { margin-top: 0; }
+        .sett-row { display: flex; align-items: center; margin-bottom: 6px; gap: 8px; font-size: 11px; }
+        .sett-row label { color: var(--text-muted); min-width: 148px; }
         .sett-row select,
         .sett-row input[type=text] {
             flex: 1; background: var(--bg); border: 1px solid var(--border);
@@ -370,8 +381,9 @@
         }
         .sett-row select:focus,
         .sett-row input[type=text]:focus { outline: none; border-color: #007acc; }
+        .sett-footer { padding: 8px 14px 10px; border-top: 1px solid var(--border); flex-shrink: 0; }
         .sett-apply {
-            margin-top: 10px; width: 100%; padding: 5px; background: #007acc;
+            width: 100%; padding: 5px; background: #007acc;
             border: none; border-radius: 3px; color: #fff; font: inherit; font-size: 11px; cursor: pointer;
         }
         .sett-apply:hover { background: #0090e8; }
@@ -457,47 +469,188 @@
 
 <!-- Settings dropdown -->
 <div id="settings-panel">
-    <div class="sett-title">Schema settings</div>
-    <div class="sett-row">
-        <label for="sett-pk">Primary Key</label>
-        <select id="sett-pk">
-            <option value="">— default —</option>
-            <option value="seq">seq (sequence)</option>
-            <option value="identityDataType">identityDataType</option>
-            <option value="guid">guid</option>
-            <option value="none">none</option>
-        </select>
+    <div class="sett-hdr">Settings</div>
+    <div class="sett-body">
+
+        <div class="sett-group">Primary Key</div>
+        <div class="sett-row">
+            <label for="sett-pk">PK type</label>
+            <select id="sett-pk">
+                <option value="">— default (guid) —</option>
+                <option value="identityDataType">identityDataType</option>
+                <option value="guid">guid</option>
+                <option value="seq">seq (sequence)</option>
+                <option value="none">none</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-genpk">Auto PK</label>
+            <select id="sett-genpk">
+                <option value="">— default (yes) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-prefixpk">Prefix PK with table name</label>
+            <select id="sett-prefixpk">
+                <option value="">— default (no) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+
+        <div class="sett-group">Naming</div>
+        <div class="sett-row">
+            <label for="sett-prefix">Object prefix</label>
+            <input id="sett-prefix" type="text" placeholder="e.g. app_, hr_">
+        </div>
+        <div class="sett-row">
+            <label for="sett-schema">Schema</label>
+            <input id="sett-schema" type="text" placeholder="e.g. HR, APP">
+        </div>
+        <div class="sett-row">
+            <label for="sett-dialect">SQL dialect</label>
+            <input id="sett-dialect" type="text" placeholder="oracle">
+        </div>
+
+        <div class="sett-group">Data Types</div>
+        <div class="sett-row">
+            <label for="sett-db">DB version</label>
+            <input id="sett-db" type="text" placeholder="e.g. 23c, 19c, 21c">
+        </div>
+        <div class="sett-row">
+            <label for="sett-sem">Char semantics</label>
+            <select id="sett-sem">
+                <option value="">— default (CHAR) —</option>
+                <option value="CHAR">CHAR</option>
+                <option value="BYTE">BYTE</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-date">Date data type</label>
+            <select id="sett-date">
+                <option value="">— default (DATE) —</option>
+                <option value="DATE">DATE</option>
+                <option value="TIMESTAMP">TIMESTAMP</option>
+                <option value="Timestamp with time zone">TIMESTAMP WITH TIME ZONE</option>
+                <option value="Timestamp with local time zone">TIMESTAMP WITH LOCAL TIME ZONE</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-bool">Boolean data type</label>
+            <select id="sett-bool">
+                <option value="">— not set —</option>
+                <option value="native">native (23c boolean)</option>
+                <option value="yn">yn (char Y/N)</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-lang">Data language</label>
+            <select id="sett-lang">
+                <option value="">— default (EN) —</option>
+                <option value="EN">EN (English)</option>
+                <option value="JP">JP (Japanese)</option>
+                <option value="KO">KO (Korean)</option>
+            </select>
+        </div>
+
+        <div class="sett-group">Auto Columns</div>
+        <div class="sett-row">
+            <label for="sett-audit">Audit columns</label>
+            <select id="sett-audit">
+                <option value="">— default (no) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-rowver">Row version</label>
+            <select id="sett-rowver">
+                <option value="">— default (no) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-rowkey">Row key (alphanumeric)</label>
+            <select id="sett-rowkey">
+                <option value="">— default (no) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-aienrich">AI enrichment</label>
+            <select id="sett-aienrich">
+                <option value="">— default (no) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+
+        <div class="sett-group">Output</div>
+        <div class="sett-row">
+            <label for="sett-drop">Include DROP statements</label>
+            <select id="sett-drop">
+                <option value="">— default (no) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-inserts">Generate INSERTs</label>
+            <select id="sett-inserts">
+                <option value="">— default (yes) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-dv">Duality views</label>
+            <select id="sett-dv">
+                <option value="">— default (no) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-edit">Editionable</label>
+            <select id="sett-edit">
+                <option value="">— default (no) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-api">Table API (TAPI)</label>
+            <select id="sett-api">
+                <option value="">— default (no) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-apex">APEX</label>
+            <select id="sett-apex">
+                <option value="">— default (no) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+        <div class="sett-row">
+            <label for="sett-compress">Table compression</label>
+            <select id="sett-compress">
+                <option value="">— default (no) —</option>
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+            </select>
+        </div>
+
     </div>
-    <div class="sett-row">
-        <label for="sett-sem">Char Semantics</label>
-        <select id="sett-sem">
-            <option value="">— default —</option>
-            <option value="CHAR">CHAR</option>
-            <option value="BYTE">BYTE</option>
-        </select>
+    <div class="sett-footer">
+        <button class="sett-apply" id="btn-sett-apply">Apply settings</button>
     </div>
-    <div class="sett-row">
-        <label for="sett-db">DB Version</label>
-        <input id="sett-db" type="text" placeholder="e.g. 23c, 19c, 21c">
-    </div>
-    <hr class="sett-sep">
-    <div class="sett-row">
-        <label for="sett-prefix">Table prefix</label>
-        <input id="sett-prefix" type="text" placeholder="e.g. app_, hr_">
-    </div>
-    <div class="sett-row">
-        <label for="sett-schema">Schema</label>
-        <input id="sett-schema" type="text" placeholder="e.g. HR, APP">
-    </div>
-    <div class="sett-row">
-        <label for="sett-edit">Editionable</label>
-        <select id="sett-edit">
-            <option value="">— default —</option>
-            <option value="yes">yes</option>
-            <option value="no">no</option>
-        </select>
-    </div>
-    <button class="sett-apply" id="btn-sett-apply">Apply settings</button>
 </div>
 <div id="error"></div>
 
@@ -1539,18 +1692,43 @@ function parseSettings() {
 
 /** Rebuild the # settings line and inject/replace it in the textarea. */
 function writeSettings(s) {
-    const pairs = [];
-    if (s.pk)     pairs.push(`pk: ${s.pk}`);
-    if (s.sem)    pairs.push(`semantics: ${s.sem}`);
-    if (s.db)     pairs.push(`db: ${s.db}`);
-    if (s.prefix) pairs.push(`prefix: ${s.prefix}`);
-    if (s.schema) pairs.push(`schema: ${s.schema}`);
-    if (s.edit)   pairs.push(`editionable: ${s.edit}`);
-    const line = `# settings = { ${pairs.join(', ')} }`;
+    const p = [];
+    const add = (key, val) => { if (val) p.push(`${key}: ${val}`); };
+    // PK
+    add('pk',                 s.pk);
+    add('genpk',              s.genpk);
+    add('prefixpkwithtname',  s.prefixpk);
+    // Naming
+    add('prefix',             s.prefix);
+    add('schema',             s.schema);
+    add('dialect',            s.dialect);
+    // Data types
+    add('db',                 s.db);
+    add('semantics',          s.sem);
+    add('date',               s.date);
+    add('boolean',            s.bool);
+    add('language',           s.lang);
+    // Auto columns
+    add('auditcols',          s.audit);
+    add('rowversion',         s.rowver);
+    add('rowkey',             s.rowkey);
+    add('aienrichment',       s.aienrich);
+    // Output
+    add('drop',               s.drop);
+    add('inserts',            s.inserts);
+    add('dv',                 s.dv);
+    add('editionable',        s.edit);
+    add('api',                s.api);
+    add('apex',               s.apex);
+    add('compress',           s.compress);
+
+    const line = p.length ? `# settings = { ${p.join(', ')} }` : '';
     const text = inputEl.value;
     if (/^#\s*settings\s*=/m.test(text)) {
-        inputEl.value = text.replace(/^#\s*settings\s*=.*$/m, line);
-    } else {
+        inputEl.value = line
+            ? text.replace(/^#\s*settings\s*=.*$/m, line)
+            : text.replace(/\n*^#\s*settings\s*=.*$\n?/m, '');
+    } else if (line) {
         inputEl.value = text.trimEnd() + '\n\n' + line + '\n';
     }
     update();
@@ -1559,12 +1737,29 @@ function writeSettings(s) {
 /** Populate form controls from the current settings line. */
 function syncSettingsForm() {
     const s = parseSettings();
-    document.getElementById('sett-pk').value     = s.pk     || '';
-    document.getElementById('sett-sem').value    = s.semantics || '';
-    document.getElementById('sett-db').value     = s.db     || '';
-    document.getElementById('sett-prefix').value = s.prefix || '';
-    document.getElementById('sett-schema').value = s.schema || '';
-    document.getElementById('sett-edit').value   = s.editionable || '';
+    const set = (id, key) => { document.getElementById(id).value = s[key] || ''; };
+    set('sett-pk',       'pk');
+    set('sett-genpk',    'genpk');
+    set('sett-prefixpk', 'prefixpkwithtname');
+    set('sett-prefix',   'prefix');
+    set('sett-schema',   'schema');
+    set('sett-dialect',  'dialect');
+    set('sett-db',       'db');
+    set('sett-sem',      'semantics');
+    set('sett-date',     'date');
+    set('sett-bool',     'boolean');
+    set('sett-lang',     'language');
+    set('sett-audit',    'auditcols');
+    set('sett-rowver',   'rowversion');
+    set('sett-rowkey',   'rowkey');
+    set('sett-aienrich', 'aienrichment');
+    set('sett-drop',     'drop');
+    set('sett-inserts',  'inserts');
+    set('sett-dv',       'dv');
+    set('sett-edit',     'editionable');
+    set('sett-api',      'api');
+    set('sett-apex',     'apex');
+    set('sett-compress', 'compress');
 }
 
 btnSettings.addEventListener('click', (e) => {
@@ -1579,13 +1774,30 @@ btnSettings.addEventListener('click', (e) => {
 });
 
 document.getElementById('btn-sett-apply').addEventListener('click', () => {
+    const v = (id) => document.getElementById(id).value;
     writeSettings({
-        pk:     document.getElementById('sett-pk').value,
-        sem:    document.getElementById('sett-sem').value,
-        db:     document.getElementById('sett-db').value,
-        prefix: document.getElementById('sett-prefix').value,
-        schema: document.getElementById('sett-schema').value,
-        edit:   document.getElementById('sett-edit').value,
+        pk:       v('sett-pk'),
+        genpk:    v('sett-genpk'),
+        prefixpk: v('sett-prefixpk'),
+        prefix:   v('sett-prefix'),
+        schema:   v('sett-schema'),
+        dialect:  v('sett-dialect'),
+        db:       v('sett-db'),
+        sem:      v('sett-sem'),
+        date:     v('sett-date'),
+        bool:     v('sett-bool'),
+        lang:     v('sett-lang'),
+        audit:    v('sett-audit'),
+        rowver:   v('sett-rowver'),
+        rowkey:   v('sett-rowkey'),
+        aienrich: v('sett-aienrich'),
+        drop:     v('sett-drop'),
+        inserts:  v('sett-inserts'),
+        dv:       v('sett-dv'),
+        edit:     v('sett-edit'),
+        api:      v('sett-api'),
+        apex:     v('sett-apex'),
+        compress: v('sett-compress'),
     });
     settingsPanel.classList.remove('open');
 });
@@ -2025,16 +2237,28 @@ function startTabRename(tabId, nameEl) {
                 <p class="hdw-note">Add at the end of the file or use the <strong>⚙ Settings</strong> panel in the header.</p>
                 <code class="hdw-eg"># settings = { pk: seq, semantics: CHAR, db: 23c }</code>
                 <table class="ref" style="margin-top:6px">
-                    <tr><td>pk</td><td><em>seq</em> | <em>guid</em> | <em>identityDataType</em> | <em>none</em></td></tr>
-                    <tr><td>semantics</td><td><em>CHAR</em> | <em>BYTE</em></td></tr>
-                    <tr><td>db</td><td>Oracle version: <em>23c</em>, <em>19c</em>, <em>21c</em> …</td></tr>
-                    <tr><td>prefix</td><td>Table prefix (e.g. <em>app_</em>)</td></tr>
+                    <tr><td>pk</td><td><em>identityDataType</em> | <em>guid</em> | <em>seq</em> | <em>none</em></td></tr>
+                    <tr><td>genpk</td><td><em>yes</em> | <em>no</em> — auto-generate PK column</td></tr>
+                    <tr><td>prefixpkwithtname</td><td><em>yes</em> | <em>no</em> — prefix PK col with table name</td></tr>
+                    <tr><td>prefix</td><td>Object prefix (e.g. <em>app_</em>)</td></tr>
                     <tr><td>schema</td><td>Oracle schema name (e.g. <em>HR</em>)</td></tr>
+                    <tr><td>dialect</td><td>SQL dialect — <em>oracle</em> (default)</td></tr>
+                    <tr><td>db</td><td>Oracle version: <em>23c</em>, <em>19c</em>, <em>21c</em> …</td></tr>
+                    <tr><td>semantics</td><td><em>CHAR</em> | <em>BYTE</em></td></tr>
+                    <tr><td>date</td><td><em>DATE</em> | <em>TIMESTAMP</em> | <em>tswtz</em> | <em>tswltz</em></td></tr>
+                    <tr><td>boolean</td><td><em>native</em> (23c) | <em>yn</em> (char Y/N)</td></tr>
+                    <tr><td>language</td><td>Sample data locale: <em>EN</em> | <em>JP</em> | <em>KO</em></td></tr>
+                    <tr><td>auditcols</td><td><em>yes</em> | <em>no</em> — created/updated/by columns</td></tr>
+                    <tr><td>rowversion</td><td><em>yes</em> | <em>no</em> — row version for OCC</td></tr>
+                    <tr><td>rowkey</td><td><em>yes</em> | <em>no</em> — alphanumeric row identifier</td></tr>
+                    <tr><td>aienrichment</td><td><em>yes</em> | <em>no</em> — AI enrichment columns</td></tr>
+                    <tr><td>drop</td><td><em>yes</em> | <em>no</em> — include DROP statements</td></tr>
+                    <tr><td>inserts</td><td><em>yes</em> | <em>no</em> — generate INSERT data</td></tr>
+                    <tr><td>dv</td><td><em>yes</em> | <em>no</em> — enable JSON Duality Views</td></tr>
                     <tr><td>editionable</td><td><em>yes</em> | <em>no</em></td></tr>
-                    <tr><td>auditcols</td><td><em>yes</em> | <em>no</em></td></tr>
-                    <tr><td>rowversion</td><td><em>yes</em> | <em>no</em></td></tr>
-                    <tr><td>DV</td><td><em>true</em> | <em>false</em> — enable Duality Views</td></tr>
-                    <tr><td>language</td><td>Locale for sample names (e.g. <em>EN</em>, <em>JP</em>)</td></tr>
+                    <tr><td>api</td><td><em>yes</em> | <em>no</em> — Table API (TAPI) package</td></tr>
+                    <tr><td>apex</td><td><em>yes</em> | <em>no</em> — APEX integration</td></tr>
+                    <tr><td>compress</td><td><em>yes</em> | <em>no</em> — table compression</td></tr>
                 </table>
             </div>
         </details>
