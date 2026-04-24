@@ -14,7 +14,7 @@ Contributors
 *   **Oracle Corporation** — original QuickSQL engine and QSQL shorthand specification.
 *   **Roberto Capancioni, Radicle s.r.l.** — TypeScript refactoring (v2.0.0): decoupled pipeline architecture, multi-dialect generator framework, PL/SQL builder modules, strict type interfaces.
 
-try **examples/interactive.html**
+try **index.html**
 
 QuickSQL TypeScript Architecture Overview
 =========================================

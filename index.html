@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Radicle QuickSQL — Interactive</title>
     <!-- AntV X6 v2 — UMD bundle (local copy) -->
-    <script src="../dist/antv-x6/2.18.1/index.min.js"></script>
+    <script src="dist/antv-x6/2.18.1/index.min.js"></script>
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -255,7 +255,7 @@
 
 <header>
     <a href="https://radicle.it" target="_blank" rel="noopener" class="logo-link">
-        <img src="../img/radicle_01.png" class="logo-img" alt="Radicle">
+        <img src="img/radicle_01.png" class="logo-img" alt="Radicle">
     </a>
     <span class="title">QuickSQL</span>
     <span class="subtitle">- Write shorthand on the left, the Oracle DDL appears on the right in real time</span>
@@ -310,7 +310,7 @@ emp_v = departments employees
 <footer id="status">pronto</footer>
 
 <script type="module">
-import { toDDL, toERD } from '../dist/quick-sql.js';
+import { toDDL, toERD } from './dist/quick-sql.js';
 // Graph resolved lazily inside initGraph() — X6 load failure won't break DDL
 
 // ════════════════════════════════════════════════════════════════
