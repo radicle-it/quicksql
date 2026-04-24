@@ -2,6 +2,8 @@
 declare const __PACKAGE_VERSION__: string | undefined;
 
 import tree, { createGenerator, DdlNode } from './tree.js';
+export { registerGenerator } from './tree.js';
+export type { GeneratorFactory } from './tree.js';
 import lexer from './lexer.js';
 import json2qsql from './json2qsql.js';
 import errorMsgs from './errorMsgs.js';
@@ -76,6 +78,7 @@ const defaultOptions: OptionsRecord = {
     api:              { label: 'Table API',                     value: 'no',      check: ['yes','no'] },
     compress:         { label: 'Table Compression',             value: 'no',      check: ['yes','no'] },
     transcontext:     { label: 'Translation Context',           value: "sys_context('APP_CTX','LANG')" },
+    dialect:          { label: 'SQL Dialect',                   value: 'oracle' },
 };
 
 // ── quicksql class ────────────────────────────────────────────────────────────

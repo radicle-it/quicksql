@@ -1590,11 +1590,3 @@ export class OracleDDLGenerator implements DDLGenerator {
 
 // ── Generator factory ─────────────────────────────────────────────────────────
 
-/**
- * Returns the appropriate DDLGenerator for the given context.
- * Currently always returns OracleDDLGenerator; extend this function when
- * additional database dialects are added (Postgres, MySQL, etc.).
- */
-export function createGenerator(ctx: DdlContext): DDLGenerator {
-    return new OracleDDLGenerator(ctx);
-}
