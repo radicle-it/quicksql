@@ -5,7 +5,8 @@ import { LexerToken } from './lexer.js';
 import amend_reserved_word from './reserved_words.js';
 import split_str from './split_str.js';
 import { DdlNode, DEFAULT_NAMING, tab, EXPANDING_TYPES } from './node.js';
-import type { DdlContext, DDLGenerator, IDdlNode, SemanticType, ErdColumn, ErdItem, ErdLink, ErdOutput } from './types.js';
+import type { DdlContext, IDdlNode, SemanticType } from './types.js';
+import { BaseGenerator } from './base-generator.js';
 
 // ── Local constants ───────────────────────────────────────────────────────────
 
@@ -38,14 +39,16 @@ function getValue(obj: unknown, oName: string | null, attr: string, oName2Match:
 
 // ── OracleDDLGenerator ────────────────────────────────────────────────────────
 
-export class OracleDDLGenerator implements DDLGenerator {
-    private _ddl:    DdlContext;
+export class OracleDDLGenerator extends BaseGenerator {
     private _naming: Naming;
 
     constructor(ddlCtx: DdlContext, naming?: Naming) {
-        this._ddl    = ddlCtx;
+        super(ddlCtx);
         this._naming = naming ?? DEFAULT_NAMING;
     }
+
+    /** Map a SemanticType to an Oracle DDL column type string. */
+    colType(sem: SemanticType): string { return this._toOracleType(sem); }
 
     private _pkTypeModifier(objName: string, namingOverride?: Naming): string {
         const naming = namingOverride ?? this._naming;
@@ -62,12 +65,7 @@ export class OracleDDLGenerator implements DDLGenerator {
         return tab + tab + ' '.repeat(colNode.parent!.maxChildNameLen());
     }
 
-    /**
-     * Resolve FK column Oracle DDL type from a referenced table's explicit PK.
-     * Returns null when the referenced table uses an auto-generated PK — in that
-     * case the caller should keep the FK column's own inferred type.
-     */
-    private _fkOracleType(refNode: IDdlNode): string | null {
+    protected override _fkColType(refNode: IDdlNode): string | null {
         const rname = refNode.getExplicitPkName();
         if (rname === null || rname.includes(',')) return null;
         const pkChild = refNode.findChild(rname);
@@ -209,7 +207,7 @@ export class OracleDDLGenerator implements DDLGenerator {
             let refNode = this._ddl.find(parent);
             let _id = '';
             if (refNode !== null) {
-                type = this._fkOracleType(refNode) ?? type;
+                type = this._fkColType(refNode) ?? type;
             } else {
                 refNode = this._ddl.find(fk);
                 if (refNode?.isMany2One?.() && !fk.endsWith('_id')) {
@@ -1286,131 +1284,6 @@ export class OracleDDLGenerator implements DDLGenerator {
         ret += tab + 'on t.' + fkColName + ' = k.' + (idColName ?? node.getExplicitPkName()) + '\n';
         ret += tab + 'and t.language_code = ' + transContext + ';\n\n';
         return ret;
-    }
-
-    generateERD(): ErdOutput {
-        const descendants = this._ddl.descendants() as DdlNode[];
-        const output: ErdOutput = { items: [], links: [] };
-
-        for (const node of descendants) {
-            if (node.inferType() !== 'table') continue;
-
-            const item: ErdItem = {
-                name:    this._ddl.objPrefix('no schema') + node.parseName(),
-                schema:  (this._ddl.getOptionValue('schema') as string) || null,
-                columns: [],
-            };
-            output.items.push(item);
-
-            // PK column
-            const idColName = node.getGenIdColName();
-            if (idColName != null && !node.isOption('pk')) {
-                item.columns.push({ name: idColName, datatype: 'number' });
-            } else {
-                const pkName = node.getExplicitPkName();
-                if (pkName != null && !pkName.includes(',')) {
-                    const child = node.findChild(pkName);
-                    item.columns.push({ name: pkName, datatype: child ? this._toOracleType(child._inferTypeFull()) : 'number' });
-                }
-            }
-
-            // FK columns
-            node.lateInitFks();
-            for (const fk in node.fks) {
-                const parent: string = node.fks[fk];
-                if (fk.includes(',')) {
-                    const refNode = this._ddl.find(parent);
-                    const chunks  = split_str(fk, ', ');
-                    for (const col of chunks) {
-                        if (col === ',') continue;
-                        const pChild = refNode?.findChild(col);
-                        item.columns.push({ name: col, datatype: pChild ? this._toOracleType(pChild._inferTypeFull()) : 'number' } as ErdColumn);
-                    }
-                    continue;
-                }
-                const attr    = node.findChild(fk);
-                let   type    = attr ? attr.inferType() : 'number';
-                let   fkName  = fk;
-                const refNode = this._ddl.find(parent);
-                if (refNode != null) {
-                    type = this._fkOracleType(refNode) ?? type;
-                } else {
-                    const altRef = this._ddl.find(fk);
-                    if (altRef?.isMany2One?.() && !fk.endsWith('_id'))
-                        fkName = (singular(fk) ?? fk) + '_id';
-                }
-                item.columns.push({ name: fkName, datatype: type });
-            }
-
-            // Regular columns
-            const explicitPk = node.getExplicitPkName();
-            for (const child of node.children) {
-                if (child.inferType() === 'table') continue;
-                if (child.refId()     != null)     continue;
-                if (child.parseName() === explicitPk) continue;
-                item.columns.push({ name: child.parseName(), datatype: this._toOracleType(child._inferTypeFull()) });
-                if (child.indexOf('file') > 0) {
-                    const col = child.parseName();
-                    item.columns.push({ name: col + '_filename', datatype: 'varchar2(255' + this._ddl.semantics() + ')' });
-                    item.columns.push({ name: col + '_mimetype', datatype: 'varchar2(255' + this._ddl.semantics() + ')' });
-                    item.columns.push({ name: col + '_charset',  datatype: 'varchar2(255' + this._ddl.semantics() + ')' });
-                    item.columns.push({ name: col + '_lastupd',  datatype: 'date' });
-                }
-            }
-
-            // Row meta-columns
-            const nodeContent = node.trimmedContent().toUpperCase() as string;
-            if (this._ddl.optionEQvalue('rowkey', true) || nodeContent.includes('/ROWKEY'))
-                item.columns.push({ name: 'row_key', datatype: 'varchar2(30' + this._ddl.semantics() + ')' });
-            if (this._ddl.optionEQvalue('rowVersion', 'yes') || nodeContent.includes('/ROWVERSION'))
-                item.columns.push({ name: 'row_version', datatype: 'integer' });
-            if (this._ddl.optionEQvalue('Audit Columns', 'yes') || nodeContent.includes('/AUDITCOLS')) {
-                let auditType = (this._ddl.getOptionValue('auditdate') as string | null) || '';
-                if (!auditType) auditType = this._ddl.getOptionValue('Date Data Type') as string;
-                auditType = auditType.toLowerCase();
-                const char = this._ddl.semantics();
-                item.columns.push({ name: this._ddl.getOptionValue('createdcol')   as string, datatype: auditType });
-                item.columns.push({ name: this._ddl.getOptionValue('createdbycol') as string, datatype: 'varchar2(255' + char + ')' });
-                item.columns.push({ name: this._ddl.getOptionValue('updatedcol')   as string, datatype: auditType });
-                item.columns.push({ name: this._ddl.getOptionValue('updatedbycol') as string, datatype: 'varchar2(255' + char + ')' });
-            }
-        }
-
-        // Links
-        for (const node of descendants) {
-            if (node.inferType() !== 'table') continue;
-            this.generateDDL(node);  // populates node.fks as side-effect
-            for (const fk in node.fks) {
-                const parent  = node.fks[fk];
-                const pkNode  = this._ddl.find(parent);
-                if (pkNode == null) continue;
-                const pk        = pkNode.getExplicitPkName() ?? 'id';
-                const fkAttr    = node.findChild(fk);
-                const mandatory = fkAttr == null || fkAttr.isOption('nn') || fkAttr.isOption('notnull');
-                const link: ErdLink = {
-                    source:    this._ddl.objPrefix() + parent,
-                    source_id: pk,
-                    target:    this._ddl.objPrefix() + node.parseName(),
-                    target_id: fk,
-                };
-                if (mandatory) link.mandatory = mandatory;
-                output.links.push(link);
-            }
-        }
-
-        // Groups (only include when non-empty)
-        const groups: Record<string, string[]> = {};
-        for (const node of descendants) {
-            if (node.inferType() !== 'table') continue;
-            const groupName = node.getAnnotationValue('TGROUP') as string | null;
-            if (groupName != null) {
-                if (!groups[groupName]) groups[groupName] = [];
-                groups[groupName].push(this._ddl.objPrefix('no schema') + node.parseName());
-            }
-        }
-        if (Object.keys(groups).length > 0) output.groups = groups;
-
-        return output;
     }
 
     generateFullDDL(): string {

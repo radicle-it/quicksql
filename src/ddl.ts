@@ -2,7 +2,7 @@
 declare const __PACKAGE_VERSION__: string | undefined;
 
 import tree, { createGenerator, DdlNode } from './tree.js';
-export { registerGenerator } from './tree.js';
+export { registerGenerator, BaseGenerator } from './tree.js';
 export type { GeneratorFactory } from './tree.js';
 import lexer from './lexer.js';
 import json2qsql from './json2qsql.js';
