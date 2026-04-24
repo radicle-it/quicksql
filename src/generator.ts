@@ -1,6 +1,4 @@
 import { singular, concatNames, getMajorVersion } from './naming.js';
-import translate from './translate.js';
-import { generateSample, resetSeed } from './sample.js';
 import { LexerToken } from './lexer.js';
 import amend_reserved_word from './reserved_words.js';
 import split_str from './split_str.js';
@@ -21,21 +19,6 @@ function trimTrailingComma(s: string): string {
     return s;
 }
 
-// ── getValue (used by _buildInsertStatement) ──────────────────────────────────
-
-function getValue(obj: unknown, oName: string | null, attr: string, oName2Match: string): unknown[] | null {
-    let ret: unknown[] = [];
-    if (obj === null || obj === undefined) return null;
-    if (typeof obj !== 'object') return null;
-    const tmp = (obj as Record<string, unknown>)[attr];
-    if (tmp !== null && tmp !== undefined && oName === oName2Match) ret.push(tmp);
-    for (const p in obj as object) {
-        const child = (obj as Record<string, unknown>)[p];
-        const sub = getValue(child, p, attr, oName2Match);
-        if (sub !== null) ret = ret.concat(sub);
-    }
-    return ret;
-}
 
 // ── OracleDDLGenerator ────────────────────────────────────────────────────────
 
@@ -397,26 +380,6 @@ export class OracleDDLGenerator extends BaseGenerator {
                 ret += "comment on column " + objName + '.' + child.parseName() + " is '" + colComment + "';\n";
         }
         return ret;
-    }
-
-    _orderedTableNodes(node: DdlNode): DdlNode[] {
-        const ret: DdlNode[] = [node];
-        const descendants = node.descendants();
-        for (let i = 1; i < descendants.length; i++) {
-            const desc = descendants[i];
-            if (desc.children.length === 0) continue;
-            if (desc.isMany2One()) {
-                if (!this._isContainedIn(desc, ret)) ret.unshift(desc);
-            } else if (!this._isContainedIn(desc, ret))
-                ret.push(desc);
-        }
-        return ret;
-    }
-
-    _isContainedIn(node: DdlNode, nodes: DdlNode[]): boolean {
-        for (const i in nodes)
-            if (nodes[i].parseName() === node.parseName()) return true;
-        return false;
     }
 
     parseType(node: IDdlNode): string {
@@ -954,151 +917,9 @@ export class OracleDDLGenerator extends BaseGenerator {
         return ret.toLowerCase();
     }
 
-    generateData(node: IDdlNode, dataObj: unknown): string {
-        resetSeed();
-        if (this._ddl.optionEQvalue('inserts', false)) return '';
-        const tab2inserts = this.inserts4tbl(node as DdlNode, dataObj);
-        const tables      = this._orderedTableNodes(node as DdlNode);
-        let ret = '';
-        for (let i = 0; i < tables.length; i++) {
-            const objName = this._ddl.objPrefix() + tables[i].parseName();
-            const inserts = (tab2inserts as Record<string, string>)[objName];
-            if (inserts !== null && inserts !== undefined) ret += inserts;
-        }
-        return ret;
-    }
-
-    inserts4tbl(node: DdlNode, dataObj: unknown): Record<string, string> {
-        let tab2inserts: Record<string, string> = {};
-        if (this._ddl.optionEQvalue('inserts', false)) return {};
-        const objName = this._ddl.objPrefix() + node.parseName();
-        let insert = '';
-        for (let i = 0; i < node.cardinality(); i++) {
-            let elem: unknown = null;
-            if (dataObj !== null && dataObj !== undefined) {
-                const tbl = (dataObj as Record<string, unknown>)[objName];
-                if (tbl !== null && tbl !== undefined && Array.isArray(tbl)) elem = tbl[i];
-            }
-            insert += this._buildInsertStatement(node, i, elem, objName);
-        }
-        if (insert !== '') insert += '\ncommit;\n\n';
-        const idColName = node.getGenIdColName();
-        if (idColName !== null && 1 < node.cardinality() && !this._ddl.optionEQvalue('pk', 'guid')) {
-            insert += 'alter table ' + objName + '\nmodify ' + idColName + ' generated always  as identity restart start with ' + (node.cardinality() + 1) + ';\n\n';
-        }
-        tab2inserts[objName] = insert;
-        for (let i = 0; i < node.children.length; i++) {
-            const child = node.children[i];
-            if (0 < child.children.length)
-                tab2inserts = { ...tab2inserts, ...this.inserts4tbl(child, dataObj) };
-        }
-        return tab2inserts;
-    }
-
-    _buildInsertStatement(node: DdlNode, i: number, elem: unknown, objName: string): string {
-        let insert = 'insert into ' + objName + ' (\n';
-        const idColName = node.getGenIdColName();
-        let pkName:  string | null = null;
-        let pkValue: unknown = null;
-        if (idColName !== null) {
-            pkName = idColName;
-            insert += tab + pkName + ',\n';
-        } else {
-            pkName = node.getExplicitPkName();
-            if (pkName !== null) insert += tab + pkName + ',\n';
-        }
-        for (let fk in node.fks) {
-            let parent  = node.fks![fk];
-            let _id = '';
-            let refNode = this._ddl.find(parent);
-            if (refNode === null) {
-                refNode = this._ddl.find(fk);
-                if (refNode?.isMany2One?.() && !fk.endsWith('_id')) {
-                    parent = fk; fk = singular(fk) ?? fk; _id = '_id';
-                }
-            }
-            insert += tab + fk + _id + ',\n';
-        }
-        for (const child of node.regularColumns()) {
-            if (idColName !== null && child.parseName() === 'id') continue;
-            if (child.isOption('pk')) continue;
-            insert += tab + child.parseName() + ',\n';
-        }
-        insert = trimTrailingComma(insert);
-        insert += ') values (\n';
-        if (idColName !== null) {
-            pkValue = i + 1;
-            insert += tab + pkValue + ',\n';
-        } else if (pkName !== null) {
-            const field = pkName;
-            const tmp = getValue(this._ddl.data, null, field, node.parseName());
-            let v: unknown = -1;
-            if (elem !== null && elem !== undefined) v = (elem as Record<string, unknown>)[field];
-            if (tmp !== null && tmp !== undefined && (tmp as unknown[])[i] !== null && (tmp as unknown[])[i] !== undefined)
-                v = (tmp as unknown[])[i];
-            if (v !== -1 && typeof v === 'string') v = "'" + v + "'";
-            pkValue = v !== -1 ? v : i + 1;
-            insert += tab + pkValue + ',\n';
-        }
-        for (const fk in node.fks) {
-            const ref = node.fks![fk];
-            const { type, values } = this._resolveFkSampleValues(node, fk, ref, elem, pkValue, objName);
-            insert += tab + String(translate(String(this._ddl.getOptionValue('Data Language') ?? 'EN'), generateSample(objName, (singular(ref) ?? ref) + '_id', type, values))) + ',\n';
-        }
-        for (const child of node.regularColumns()) {
-            if (idColName !== null && child.parseName() === 'id') continue;
-            if (child.parseName() === node.getExplicitPkName()) continue;
-            let values = child.parseValues();
-            const cname = child.parseName();
-            if (elem !== null && elem !== undefined) {
-                const v = (elem as Record<string, unknown>)[cname];
-                if (v !== null && v !== undefined) values = [v as string];
-            }
-            const datum = generateSample(objName, cname, this._toOracleType(child._inferTypeFull()), values);
-            insert += tab + String(translate(String(this._ddl.getOptionValue('Data Language') ?? 'EN'), datum)) + ',\n';
-        }
-        insert = trimTrailingComma(insert);
-        insert += ');\n';
-        return insert;
-    }
-
-    _resolveFkSampleValues(_node: DdlNode, fk: string, ref: string, elem: unknown, pkValue: unknown, objName: string): { type: string; values: unknown[] } {
-        const refNode = this._ddl.find(ref);
-        let values: unknown[] = [];
-        let type = 'INTEGER';
-        for (let k = 1; k <= (refNode?.cardinality() ?? 0); k++) values.push(k);
-        if (elem !== null && elem !== undefined) {
-            const elemObj  = elem as Record<string, unknown>;
-            const refData0 = elemObj[fk];
-            if (refData0 !== null && refData0 !== undefined) {
-                if (typeof refData0 === 'string') type = 'STRING';
-                values = [refData0];
-            } else {
-                const m2mTbl  = objName + '_' + ref;
-                const m2mData = (this._ddl.data as Record<string, unknown> | null)?.[m2mTbl];
-                if (m2mData !== null && m2mData !== undefined) {
-                    for (const idx in m2mData as object) {
-                        const row = (m2mData as Record<string, unknown>)[idx] as Record<string, unknown>;
-                        if (row[objName + '_id'] === pkValue) {
-                            const rd = row[fk];
-                            if (rd !== null && rd !== undefined) {
-                                if (typeof rd === 'string') type = 'STRING';
-                                values = [rd];
-                            }
-                            break;
-                        }
-                    }
-                } else {
-                    const fk1   = refNode?.getPkName() ?? null;
-                    const rd    = fk1 !== null ? elemObj[fk1] : undefined;
-                    if (rd !== null && rd !== undefined) {
-                        if (typeof rd === 'string') type = 'STRING';
-                        values = [rd];
-                    }
-                }
-            }
-        }
-        return { type, values };
+    protected override identityRestartSql(objName: string, idColName: string, nextVal: number): string {
+        return 'alter table ' + objName + '\nmodify ' + idColName
+            + ' generated always  as identity restart start with ' + nextVal + ';\n\n';
     }
 
     generateDualityView(node: DdlNode): string {
