@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Quick SQL — Interactive</title>
+    <title>Radicle QuickSQL — Interactive</title>
     <!-- AntV X6 v2 — UMD bundle (local copy) -->
     <script src="../dist/antv-x6/2.18.1/index.min.js"></script>
     <style>
@@ -50,7 +50,7 @@
         }
 
         header {
-            padding: 7px 16px;
+            padding: 6px 16px;
             background: var(--bg-ui);
             border-bottom: 1px solid var(--border);
             display: flex;
@@ -59,8 +59,42 @@
             flex-shrink: 0;
         }
 
-        header .title   { color: #4fc1ff; font-weight: bold; font-size: 14px; }
-        header .subtitle { color: var(--text-muted); font-size: 11px; }
+        header .logo-link { display: flex; align-items: center; flex-shrink: 0; }
+        header .logo-img  { height: 22px; border-radius: 3px; background: #fff; padding: 2px 5px; display: block; }
+        header .title     { color: #4fc1ff; font-weight: bold; font-size: 14px; }
+        header .subtitle  { color: var(--text-muted); font-size: 11px; }
+        header .spacer    { flex: 1; }
+        header .radicle-link {
+            color: var(--text-muted);
+            font-size: 10px;
+            text-decoration: none;
+            letter-spacing: 0.5px;
+        }
+        header .radicle-link:hover { color: var(--text); }
+
+        /* ── DDL toolbar ── */
+        .ddl-toolbar {
+            display: flex;
+            gap: 6px;
+            padding: 4px 10px;
+            background: var(--bg-panel);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            align-items: center;
+        }
+        .tool-btn {
+            padding: 3px 11px;
+            background: #2a2d2e;
+            border: 1px solid var(--border);
+            border-radius: 3px;
+            color: var(--text-muted);
+            font: inherit;
+            font-size: 11px;
+            cursor: pointer;
+            transition: color .15s, border-color .15s;
+        }
+        .tool-btn:hover  { color: var(--text); border-color: #6a6a6a; }
+        .tool-btn.ok     { color: #4ec9b0; border-color: #4ec9b0; }
 
         #error {
             display: none;
@@ -220,8 +254,13 @@
 <body class="vscode-dark">
 
 <header>
-    <span class="title">Quick SQL</span>
+    <a href="https://radicle.it" target="_blank" rel="noopener" class="logo-link">
+        <img src="../img/radicle_01.png" class="logo-img" alt="Radicle">
+    </a>
+    <span class="title">QuickSQL</span>
     <span class="subtitle">— scrivi shorthand a sinistra, il DDL Oracle appare a destra in tempo reale</span>
+    <span class="spacer"></span>
+    <a href="https://radicle.it" target="_blank" rel="noopener" class="radicle-link">radicle.it</a>
 </header>
 <div id="error"></div>
 
@@ -255,6 +294,10 @@ emp_v = departments employees
             <button class="tab-btn"        data-tab="erd">Diagramma ER</button>
         </div>
         <div class="tab-pane active" data-tab="ddl">
+            <div class="ddl-toolbar">
+                <button id="btn-copy"  class="tool-btn">Copia DDL</button>
+                <button id="btn-share" class="tool-btn">Condividi link</button>
+            </div>
             <pre id="output"></pre>
         </div>
         <div class="tab-pane" data-tab="erd">
@@ -874,6 +917,57 @@ const outputEl     = document.getElementById('output');
 const erdContainer = document.getElementById('erd-container');
 const errorEl      = document.getElementById('error');
 const statusEl     = document.getElementById('status');
+const btnCopy      = document.getElementById('btn-copy');
+const btnShare     = document.getElementById('btn-share');
+
+// ── LocalStorage key ─────────────────────────────────────────────
+const LS_KEY = 'radicle-qsql-v1';
+
+// ── Restore from URL hash (priority) or localStorage ─────────────
+(function restoreInput() {
+    try {
+        const hash = window.location.hash.slice(1);
+        if (hash) {
+            inputEl.value = decodeURIComponent(hash);
+            history.replaceState(null, '', window.location.pathname);
+            return;
+        }
+    } catch (_) {}
+    try {
+        const saved = localStorage.getItem(LS_KEY);
+        if (saved) inputEl.value = saved;
+    } catch (_) {}
+})();
+
+// ── Copy DDL to clipboard ─────────────────────────────────────────
+let _lastDdlText = '';
+
+function flashBtn(btn) {
+    btn.classList.add('ok');
+    setTimeout(() => btn.classList.remove('ok'), 1400);
+}
+
+btnCopy.addEventListener('click', () => {
+    if (!_lastDdlText) return;
+    navigator.clipboard.writeText(_lastDdlText).then(() => {
+        const prev = btnCopy.textContent;
+        btnCopy.textContent = '✓ copiato';
+        flashBtn(btnCopy);
+        setTimeout(() => { btnCopy.textContent = prev; }, 1400);
+    });
+});
+
+// ── Share URL ────────────────────────────────────────────────────
+btnShare.addEventListener('click', () => {
+    const url = window.location.href.split('#')[0]
+              + '#' + encodeURIComponent(inputEl.value);
+    navigator.clipboard.writeText(url).then(() => {
+        const prev = btnShare.textContent;
+        btnShare.textContent = '✓ link copiato';
+        flashBtn(btnShare);
+        setTimeout(() => { btnShare.textContent = prev; }, 1400);
+    });
+});
 
 let activeTab = 'ddl';
 let lastRenderedInput = null;   // quicksql text last used to build the diagram
@@ -956,11 +1050,16 @@ function update() {
     const src = inputEl.value;
     qsHl.innerHTML = highlightQuickSQL(src) + '\n ';
     try {
+        localStorage.setItem(LS_KEY, src);
+    } catch (_) {}
+    try {
         const ddl = toDDL(src);
+        _lastDdlText = ddl;
         outputEl.innerHTML = highlightSQL(ddl) + '\n ';
         errorEl.style.display = 'none';
         statusEl.textContent = `${ddl.split('\n').length} righe DDL generate`;
     } catch (e) {
+        _lastDdlText = '';
         errorEl.textContent  = e.message || String(e);
         errorEl.style.display = 'block';
         statusEl.textContent  = 'errore di sintassi';
